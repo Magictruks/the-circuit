@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Settings, LogOut, UserCircle, BarChart3, ListChecks, Bookmark, MapPin, Edit3 } from 'lucide-react';
 import { RouteData, AppView } from '../../types'; // Assuming types are defined
+import { supabase } from '../../supabaseClient'; // Import supabase
 
 // --- Placeholder Data ---
 const placeholderUser = {
@@ -43,14 +44,21 @@ const getGradeColorClass = (colorName: string): string => {
 
 
 interface ProfileScreenProps {
-  // Add props if needed, e.g., onNavigate to route detail
    onNavigate: (view: AppView, routeId?: string) => void;
+   onLogout: () => Promise<void>; // Add onLogout prop
 }
 
 type ProfileTab = 'logbook' | 'wishlist' | 'stats';
 
-const ProfileScreen: React.FC<ProfileScreenProps> = ({ onNavigate }) => {
+const ProfileScreen: React.FC<ProfileScreenProps> = ({ onNavigate, onLogout }) => {
   const [activeTab, setActiveTab] = useState<ProfileTab>('logbook');
+  const [isLoggingOut, setIsLoggingOut] = useState(false); // Add loading state for logout
+
+  const handleLogoutClick = async () => {
+    setIsLoggingOut(true);
+    await onLogout();
+    // No need to setIsLoggingOut(false) here, as the component will unmount/redirect
+  };
 
   const renderLogbookItem = (route: RouteData) => (
     <div
@@ -118,6 +126,7 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ onNavigate }) => {
       {/* Header: Added relative positioning */}
       <header className="bg-gradient-to-r from-brand-green to-brand-gray p-4 pt-8 pb-16 text-white relative">
          <div className="flex items-center gap-4">
+            {/* TODO: Replace with actual user data */}
             <img
               src={placeholderUser.avatarUrl}
               alt={placeholderUser.username}
@@ -127,6 +136,7 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ onNavigate }) => {
                <h1 className="text-2xl font-bold">{placeholderUser.username}</h1>
                <div className="text-sm opacity-90 mt-1 flex items-center gap-1">
                   <MapPin size={14} />
+                  {/* TODO: Replace with actual user data */}
                   {placeholderUser.homeGymIds.map(id => getGymNameById(id)).join(', ')}
                </div>
             </div>
@@ -167,6 +177,7 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ onNavigate }) => {
           {activeTab === 'logbook' && (
              <div>
                 {/* TODO: Add search/filter for logbook */}
+                {/* TODO: Replace with actual user data */}
                 {placeholderLogbook.length > 0 ? (
                    placeholderLogbook.map(renderLogbookItem)
                 ) : (
@@ -176,6 +187,7 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ onNavigate }) => {
           )}
           {activeTab === 'wishlist' && (
              <div>
+                {/* TODO: Replace with actual user data */}
                 {placeholderWishlist.length > 0 ? (
                    placeholderWishlist.map(renderWishlistItem)
                 ) : (
@@ -183,13 +195,30 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ onNavigate }) => {
                 )}
              </div>
           )}
+           {/* TODO: Replace with actual user data */}
            {activeTab === 'stats' && renderStats()}
         </div>
 
-        {/* Settings/Logout Section (Simplified) */}
+        {/* Settings/Logout Section */}
         <div className="mt-6 text-center">
-           <button className="text-sm text-brand-gray hover:text-accent-red flex items-center justify-center gap-1 mx-auto">
-              <LogOut size={16} /> Logout
+           <button
+              onClick={handleLogoutClick}
+              disabled={isLoggingOut}
+              className="text-sm text-brand-gray hover:text-accent-red flex items-center justify-center gap-1 mx-auto disabled:opacity-50 disabled:cursor-wait"
+           >
+              {isLoggingOut ? (
+                <>
+                  <svg className="animate-spin -ml-1 mr-1 h-4 w-4 text-brand-gray" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Logging out...
+                </>
+              ) : (
+                <>
+                  <LogOut size={16} /> Logout
+                </>
+              )}
            </button>
            {/* TODO: Link to a dedicated settings screen */}
         </div>
