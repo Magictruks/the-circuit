@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Mountain, LogIn, UserPlus } from 'lucide-react';
+import { supabase } from '../../supabaseClient'; // Import the Supabase client
 
 interface AuthScreenProps {
   onAuthSuccess: () => void;
@@ -11,35 +12,67 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false); // Add loading state
+
+  const handleLogin = async () => {
+    setLoading(true);
+    setError(null);
+    const { error } = await supabase.auth.signInWithPassword({
+      email: email,
+      password: password,
+    });
+
+    if (error) {
+      setError(error.message);
+    } else {
+      console.log('Login successful!');
+      onAuthSuccess(); // Proceed to next step on success
+    }
+    setLoading(false);
+  };
+
+  const handleSignUp = async () => {
+    setLoading(true);
+    setError(null);
+    if (password !== confirmPassword) {
+      setError("Passwords do not match.");
+      setLoading(false);
+      return;
+    }
+    if (password.length < 6) {
+        setError("Password must be at least 6 characters long.");
+        setLoading(false);
+        return;
+    }
+
+    const { error } = await supabase.auth.signUp({
+      email: email,
+      password: password,
+      options: {
+        // Disable email confirmation
+        emailRedirectTo: undefined,
+      }
+    });
+
+    if (error) {
+      setError(error.message);
+    } else {
+      console.log('Sign up successful! Please check your email if confirmation is enabled.');
+      // For this app, we assume immediate success without email confirmation
+      onAuthSuccess(); // Proceed to next step on success
+    }
+    setLoading(false);
+  };
+
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    setError(null); // Clear previous errors
+    if (loading) return; // Prevent multiple submissions
 
     if (isLogin) {
-      // --- TODO: Implement Actual Login Logic ---
-      console.log('Logging in with:', email, password);
-      if (email && password) { // Basic validation
-         // Simulate successful login for now
-         onAuthSuccess();
-      } else {
-        setError("Please enter email and password.");
-      }
-      // --- End TODO ---
+      handleLogin();
     } else {
-      // --- TODO: Implement Actual Sign Up Logic ---
-      console.log('Signing up with:', email, password);
-      if (password !== confirmPassword) {
-        setError("Passwords do not match.");
-        return;
-      }
-       if (email && password && password.length >= 6) { // Basic validation
-         // Simulate successful signup for now
-         onAuthSuccess();
-       } else {
-         setError("Please enter valid email and password (min 6 chars).");
-       }
-      // --- End TODO ---
+      handleSignUp();
     }
   };
 
@@ -65,7 +98,8 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-accent-blue"
+              disabled={loading}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-accent-blue disabled:bg-gray-100"
               placeholder="you@example.com"
             />
           </div>
@@ -77,7 +111,8 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-accent-blue"
+              disabled={loading}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-accent-blue disabled:bg-gray-100"
               placeholder="••••••••"
             />
           </div>
@@ -90,39 +125,47 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 required
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-accent-blue"
+                disabled={loading}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-accent-blue disabled:bg-gray-100"
                 placeholder="••••••••"
               />
             </div>
           )}
           <button
             type="submit"
-            className="w-full bg-accent-blue hover:bg-opacity-90 text-white font-bold py-2 px-4 rounded-md transition duration-300 flex items-center justify-center space-x-2"
+            disabled={loading}
+            className="w-full bg-accent-blue hover:bg-opacity-90 text-white font-bold py-2 px-4 rounded-md transition duration-300 flex items-center justify-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {isLogin ? <LogIn size={18} /> : <UserPlus size={18} />}
-            <span>{isLogin ? 'Log In' : 'Sign Up'}</span>
+            {loading ? (
+              <>
+                <svg className="animate-spin -ml-1 mr-2 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                Processing...
+              </>
+            ) : (
+              <>
+                {isLogin ? <LogIn size={18} /> : <UserPlus size={18} />}
+                <span>{isLogin ? 'Log In' : 'Sign Up'}</span>
+              </>
+            )}
           </button>
         </form>
 
         <p className="text-center text-sm text-brand-gray mt-6">
           {isLogin ? "Don't have an account?" : 'Already have an account?'}
           <button
-            onClick={() => { setIsLogin(!isLogin); setError(null); }}
-            className="text-accent-blue hover:underline font-medium ml-1"
+            onClick={() => { if (!loading) { setIsLogin(!isLogin); setError(null); }}} // Prevent switching while loading
+            disabled={loading}
+            className="text-accent-blue hover:underline font-medium ml-1 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isLogin ? 'Sign Up' : 'Log In'}
           </button>
         </p>
 
-        {/* TODO: Add SSO Buttons (Google/Apple) */}
-        {/* <div className="mt-6">
-          <p className="text-center text-sm text-gray-500 mb-2">Or continue with</p>
-          <div className="flex justify-center space-x-4">
-             Button placeholders
-            <button className="p-2 border rounded-md hover:bg-gray-50">G</button>
-            <button className="p-2 border rounded-md hover:bg-gray-50">A</button>
-          </div>
-        </div> */}
+        {/* TODO: Add SSO Buttons (Google/Apple) - Requires Supabase config */}
+        {/* <div className="mt-6"> ... </div> */}
       </div>
     </div>
   );
