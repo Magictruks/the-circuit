@@ -12,6 +12,7 @@ import DiscoverScreen from './components/discover/DiscoverScreen';
 import BottomNavBar from './components/dashboard/BottomNavBar';
 import { AppView, RouteData } from './types';
 import { supabase } from './supabaseClient'; // Import supabase
+import type { User } from '@supabase/supabase-js'; // Import User type
 
 // --- Placeholder Data --- (Keep existing data)
 const placeholderRoutes: RouteData[] = [
@@ -36,35 +37,54 @@ function App() {
   const [activeGymId, setActiveGymId] = useState<string | null>(null);
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false); // Track auth state
+  const [currentUser, setCurrentUser] = useState<User | null>(null); // Add state for current user
 
-  // Check initial auth state
+  // Check initial auth state and fetch user data
   useEffect(() => {
-    const checkSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session) {
+		//supabase.auth.signOut()
+    const fetchUserAndSetState = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      setCurrentUser(user); // Set user data
+      if (user) {
         setIsAuthenticated(true);
-        // If authenticated, skip onboarding steps if already completed (e.g., check local storage or fetch user profile)
-        // For now, assume if session exists, onboarding is complete
+        // TODO: Fetch user profile/settings (like selected gyms) from your database table if needed
+        // For now, assume onboarding complete if user exists
         setOnboardingStep('complete');
-        setAppView('dashboard'); // Start at dashboard if logged in
-        // TODO: Fetch user's selected gyms and set active gym
+        setAppView('dashboard');
+        // Example: Fetch selected gyms if stored in user metadata or a profile table
+        // const userSelectedGyms = user.user_metadata?.selected_gyms || [];
+        // setSelectedGyms(userSelectedGyms);
+        // if (userSelectedGyms.length > 0 && !activeGymId) {
+        //   setActiveGymId(userSelectedGyms[0]);
+        // }
       } else {
         setIsAuthenticated(false);
+        setCurrentUser(null);
         setAppView('onboarding');
         setOnboardingStep('welcome');
       }
     };
-    checkSession();
+
+    fetchUserAndSetState(); // Check on initial load
 
     // Listen for auth changes
-    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session) {
-        setIsAuthenticated(true);
-        // Potentially fetch user data here if needed upon login/token refresh
-      } else {
-        setIsAuthenticated(false);
+    const { data: authListener } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      const user = session?.user ?? null;
+      setCurrentUser(user); // Update user state on change
+      setIsAuthenticated(!!user);
+
+      if (!user) {
         // If user logs out, reset state and go to auth screen
         handleLogoutCleanup();
+      } else {
+         // If user logs in or session is refreshed, ensure onboarding status is correct
+         // This might involve checking if they've selected gyms previously
+         // For now, if user exists, assume onboarding is complete
+         setOnboardingStep('complete');
+         // Avoid navigating if already in an app view (prevents jumping from profile to dashboard on refresh)
+         if (appView === 'onboarding') {
+            setAppView('dashboard');
+         }
       }
     });
 
@@ -72,7 +92,7 @@ function App() {
     return () => {
       authListener?.subscription.unsubscribe();
     };
-  }, []);
+  }, [appView]); // Re-run if appView changes to handle navigation after login/logout
 
 
   useEffect(() => {
@@ -86,7 +106,7 @@ function App() {
         setOnboardingStep('auth');
         break;
       case 'auth':
-        // Auth success is handled by onAuthStateChange or the AuthScreen callback
+        // Auth success is handled by onAuthStateChange listener
         break;
       case 'gymSelection':
         if (selectedGyms.length > 0) {
@@ -94,7 +114,8 @@ function App() {
           setActiveGymId(firstGym);
           setOnboardingStep('complete');
           setAppView('dashboard');
-          // TODO: Persist selected gyms for the user
+          // TODO: Persist selected gyms for the user (e.g., updateUserMetadata or profile table)
+          // supabase.auth.updateUser({ data: { selected_gyms: selectedGyms } })
         } else {
           alert("Please select at least one gym.");
         }
@@ -106,16 +127,16 @@ function App() {
 
   // Called from AuthScreen on successful login/signup
   const handleAuthSuccess = () => {
-    setIsAuthenticated(true); // Ensure state is updated immediately
-    // Check if gym selection is needed (e.g., fetch profile, if no gyms, go to selection)
-    // For now, always go to gym selection after auth success during onboarding
-    setOnboardingStep('gymSelection');
-    setAppView('onboarding'); // Keep view as onboarding until gym selection is done
+    // Auth state change is handled by the listener now, which fetches the user
+    // Determine next step based on user data (e.g., check if gyms are selected)
+    // For now, assume gym selection is needed after initial signup/login if no gyms are set
+    // A better approach: check user profile/metadata after auth listener confirms user
+    setOnboardingStep('gymSelection'); // Go to gym selection after auth
+    setAppView('onboarding');
   };
 
   const handleGymSelection = (gyms: string[]) => {
     setSelectedGyms(gyms);
-    // Maybe auto-select the first gym as active?
     if (gyms.length > 0 && !activeGymId) {
         setActiveGymId(gyms[0]);
     }
@@ -151,11 +172,9 @@ function App() {
   };
 
   const handleBetaSubmitted = () => {
-    // Go back to the route detail screen after submitting beta
     if (selectedRouteId) {
       setAppView('routeDetail');
     } else {
-      // Fallback if routeId was lost somehow
       setAppView('routes');
     }
   };
@@ -168,6 +187,7 @@ function App() {
   // Function to reset state on logout
   const handleLogoutCleanup = () => {
     setIsAuthenticated(false);
+    setCurrentUser(null); // Clear user data
     setSelectedGyms([]);
     setActiveGymId(null);
     setSelectedRouteId(null);
@@ -181,7 +201,6 @@ function App() {
     const { error } = await supabase.auth.signOut();
     if (error) {
       console.error('Error logging out:', error);
-      // Optionally show an error message to the user
     } else {
       // State cleanup is handled by the onAuthStateChange listener calling handleLogoutCleanup
       console.log('Logout successful');
@@ -192,33 +211,26 @@ function App() {
   const renderOnboarding = () => {
      switch (onboardingStep) {
        case 'welcome': return <WelcomeScreen onNext={handleNextOnboarding} />;
-       // Pass handleAuthSuccess to AuthScreen
        case 'auth': return <AuthScreen onAuthSuccess={handleAuthSuccess} />;
-       // Pass handleGymSelection and handleNextOnboarding to GymSelectionScreen
        case 'gymSelection': return <GymSelectionScreen onGymsSelected={handleGymSelection} onNext={handleNextOnboarding} />;
-       default: return null; // Should not happen if authenticated state is handled correctly
+       default: return null;
      }
    };
 
   const renderApp = () => {
     // If authenticated but onboarding isn't marked complete (e.g., no gyms selected yet)
-    // This might happen if the user authenticated but closed the app before selecting gyms
     if (isAuthenticated && onboardingStep !== 'complete') {
-        // Force gym selection if needed, otherwise show dashboard
-        if (onboardingStep === 'gymSelection' || selectedGyms.length === 0) { // Add check for selectedGyms length
+        // Check if gym selection is needed (e.g., based on fetched user data or selectedGyms state)
+        // This logic might need refinement based on how gym selection persistence is implemented
+        if (onboardingStep === 'gymSelection' || selectedGyms.length === 0) {
              return <GymSelectionScreen onGymsSelected={handleGymSelection} onNext={handleNextOnboarding} />;
         }
-        // If somehow authenticated but step is 'auth' or 'welcome', reset to 'gymSelection' or fetch profile
-        // For simplicity, let's assume if authenticated and step isn't complete, we need gym selection.
-        // A more robust solution would fetch user profile to determine the correct step.
     }
-
 
     // --- Main App Rendering ---
     const activeGymName = activeGymId ? getGymNameById(activeGymId) : 'Select Gym';
     const selectedRouteData = getRouteById(selectedRouteId);
 
-    // Show Nav Bar only for the main app views when authenticated and onboarding is complete
     const showNavBar = isAuthenticated && onboardingStep === 'complete' && ['dashboard', 'routes', 'log', 'discover', 'profile'].includes(appView);
     const navBar = showNavBar ? <BottomNavBar currentView={appView} onNavigate={handleNavigate} /> : null;
 
@@ -234,7 +246,6 @@ function App() {
         if (selectedRouteData) {
           currentScreen = <RouteDetailScreen route={selectedRouteData} onBack={handleBack} onNavigate={handleNavigate} />;
         } else {
-          // Handle case where route data might not be found (e.g., invalid ID)
           currentScreen = <div className="p-4 pt-16 text-center text-red-500">Error: Route not found. <button onClick={handleBack} className="underline">Go Back</button></div>;
         }
         break;
@@ -242,29 +253,30 @@ function App() {
          if (selectedRouteData) {
            currentScreen = <AddBetaScreen route={selectedRouteData} onBack={handleBack} onSubmitSuccess={handleBetaSubmitted} />;
          } else {
-           // Handle case where route context might be lost
            currentScreen = <div className="p-4 pt-16 text-center text-red-500">Error: Route context lost. <button onClick={handleBack} className="underline">Go Back</button></div>;
          }
          break;
       case 'log':
-         // Pass only routes relevant to the active gym if applicable, or all for now
          currentScreen = <LogClimbScreen availableRoutes={placeholderRoutes} onBack={handleBack} onSubmitSuccess={handleLogSubmitted} />;
          break;
       case 'discover':
          currentScreen = <DiscoverScreen />;
          break;
       case 'profile':
-         // Pass handleLogout to ProfileScreen
-         currentScreen = <ProfileScreen onNavigate={handleNavigate} onLogout={handleLogout} />;
+         // Pass currentUser and handleLogout to ProfileScreen
+         currentScreen = <ProfileScreen currentUser={currentUser} onNavigate={handleNavigate} onLogout={handleLogout} />;
          break;
       default:
-        // Default to dashboard if authenticated and onboarding complete, otherwise handled by initial check/onboarding render
         currentScreen = (isAuthenticated && onboardingStep === 'complete')
             ? <DashboardScreen selectedGyms={selectedGyms} activeGymId={activeGymId} onSwitchGym={handleSwitchGym} />
-            : null; // Render nothing here, as onboarding handles the initial view
+            : null;
     }
 
-    // If not authenticated and not in onboarding flow (e.g., after logout), render AuthScreen
+    // Handle loading/initial state before auth check completes
+    if (!isAuthenticated && appView === 'onboarding' && onboardingStep === 'welcome') {
+        return renderOnboarding(); // Show welcome screen initially
+    }
+    // If not authenticated (and not on welcome), show AuthScreen
      if (!isAuthenticated && appView !== 'onboarding') {
         return <AuthScreen onAuthSuccess={handleAuthSuccess} />;
      }
@@ -273,10 +285,9 @@ function App() {
          return renderOnboarding();
      }
      // If authenticated and onboarding is complete, render the main app view
-     if (isAuthenticated && onboardingStep === 'complete') {
+     if (isAuthenticated && onboardingStep === 'complete' && currentUser) { // Ensure currentUser is loaded
         return (
           <div className="font-sans">
-            {/* Apply padding-bottom only if nav bar is shown */}
             <div className={showNavBar ? "pb-16" : ""}>
                {currentScreen}
             </div>
@@ -285,11 +296,12 @@ function App() {
         );
      }
 
-     // Fallback: Render onboarding if none of the above conditions are met (e.g., initial load before auth check)
+     // Fallback/Loading state (optional)
+     // return <div>Loading...</div>; // Or a spinner component
+     // Render onboarding as default fallback if other conditions fail
      return renderOnboarding();
   }
 
-  // Determine whether to render onboarding or the main app based on auth and onboarding status
   return renderApp();
 }
 

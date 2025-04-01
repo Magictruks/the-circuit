@@ -11,6 +11,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [displayName, setDisplayName] = useState(''); // Add state for display name
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false); // Add loading state
 
@@ -44,6 +45,11 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
         setLoading(false);
         return;
     }
+    if (!displayName.trim()) { // Add validation for display name
+        setError("Please enter a display name.");
+        setLoading(false);
+        return;
+    }
 
     const { error } = await supabase.auth.signUp({
       email: email,
@@ -51,14 +57,19 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
       options: {
         // Disable email confirmation
         emailRedirectTo: undefined,
+        // Add display name to user metadata
+        data: {
+          display_name: displayName.trim(), // Pass the display name here
+        }
       }
     });
 
     if (error) {
       setError(error.message);
     } else {
-      console.log('Sign up successful! Please check your email if confirmation is enabled.');
+      console.log('Sign up successful! Display name added.');
       // For this app, we assume immediate success without email confirmation
+      // TODO: Consider creating a user profile row in a separate 'profiles' table upon signup.
       onAuthSuccess(); // Proceed to next step on success
     }
     setLoading(false);
@@ -90,6 +101,22 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
         {error && <p className="text-red-500 text-sm mb-4 text-center">{error}</p>}
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          {/* Display Name Input (only for Sign Up) */}
+          {!isLogin && (
+            <div>
+              <label htmlFor="displayName" className="block text-sm font-medium text-brand-gray mb-1">Display Name</label>
+              <input
+                type="text"
+                id="displayName"
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                required
+                disabled={loading}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-accent-blue disabled:bg-gray-100"
+                placeholder="Your Climber Name"
+              />
+            </div>
+          )}
           <div>
             <label htmlFor="email" className="block text-sm font-medium text-brand-gray mb-1">Email</label>
             <input
@@ -113,7 +140,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
               required
               disabled={loading}
               className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-accent-blue disabled:bg-gray-100"
-              placeholder="••••••••"
+              placeholder="•••••••• (min. 6 characters)"
             />
           </div>
           {!isLogin && (
@@ -156,7 +183,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
         <p className="text-center text-sm text-brand-gray mt-6">
           {isLogin ? "Don't have an account?" : 'Already have an account?'}
           <button
-            onClick={() => { if (!loading) { setIsLogin(!isLogin); setError(null); }}} // Prevent switching while loading
+            onClick={() => { if (!loading) { setIsLogin(!isLogin); setError(null); setDisplayName(''); setPassword(''); setConfirmPassword(''); }}} // Reset fields on switch
             disabled={loading}
             className="text-accent-blue hover:underline font-medium ml-1 disabled:opacity-50 disabled:cursor-not-allowed"
           >
