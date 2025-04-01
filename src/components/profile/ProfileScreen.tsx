@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, LogOut, UserCircle, BarChart3, ListChecks, Bookmark, MapPin, Edit3, Save, XCircle } from 'lucide-react';
+import { Settings, LogOut, BarChart3, ListChecks, Bookmark, MapPin, Edit3, Save, XCircle } from 'lucide-react';
 import { RouteData, AppView } from '../../types'; // Assuming types are defined
 import { supabase } from '../../supabaseClient'; // Import supabase
 import type { User } from '@supabase/supabase-js'; // Import User type

@@ -42,6 +42,7 @@ function App() {
   // Check initial auth state and fetch user data
   useEffect(() => {
 		//supabase.auth.signOut()
+    console.log("App view:", appView);
     const fetchUserAndSetState = async () => {
       const { data: { user } } = await supabase.auth.getUser();
       setCurrentUser(user); // Set user data
@@ -50,7 +51,8 @@ function App() {
         // TODO: Fetch user profile/settings (like selected gyms) from your database table if needed
         // For now, assume onboarding complete if user exists
         setOnboardingStep('complete');
-        setAppView('dashboard');
+        setAppView(appView === 'onboarding' ? 'dashboard' : appView); // Go to dashboard if not onboarding
+        console.log("User data fetched:", user);
         // Example: Fetch selected gyms if stored in user metadata or a profile table
         // const userSelectedGyms = user.user_metadata?.selected_gyms || [];
         // setSelectedGyms(userSelectedGyms);
@@ -82,7 +84,8 @@ function App() {
          // For now, if user exists, assume onboarding is complete
          setOnboardingStep('complete');
          // Avoid navigating if already in an app view (prevents jumping from profile to dashboard on refresh)
-         if (appView === 'onboarding') {
+        console.log("ici", appView)
+        if (appView === 'onboarding') {
             setAppView('dashboard');
          }
       }
@@ -143,6 +146,7 @@ function App() {
   };
 
   const handleNavigate = (view: AppView, routeId?: string) => {
+    console.log("Navigating to:", view, routeId);
     if ((view === 'routeDetail' || view === 'addBeta') && routeId) {
       setSelectedRouteId(routeId);
     } else if (view !== 'routeDetail' && view !== 'addBeta') {
