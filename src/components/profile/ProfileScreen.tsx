@@ -78,7 +78,7 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ currentUser, userMetadata
 
     // Update both auth metadata and user_metadata table for consistency
     // 1. Update auth.users metadata (triggers the sync trigger)
-    const { data: authUpdateData, error: authUpdateError } = await supabase.auth.updateUser({
+    const { error: authUpdateError } = await supabase.auth.updateUser({
       data: { display_name: trimmedName }
     });
 

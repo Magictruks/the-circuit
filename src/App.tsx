@@ -38,44 +38,73 @@ function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [userMetadata, setUserMetadata] = useState<UserMetadata | null>(null);
-  const [gymDataCache, setGymDataCache] = useState<Map<string, GymData>>(new Map());
+  // Removed gymDataCache
+  const [gymDetails, setGymDetails] = useState<Map<string, GymData>>(new Map()); // State to hold details of relevant gyms
   const [isLoadingAuth, setIsLoadingAuth] = useState(true); // Loading state for initial auth check
   const [isLoadingData, setIsLoadingData] = useState(false); // Loading state for user metadata/gym data
+  const [isLoadingGymDetails, setIsLoadingGymDetails] = useState(false); // Loading state specifically for gym details
 
   // --- Utility Functions ---
+  // Updated getGymNameById to read from gymDetails state
   const getGymNameById = useCallback((id: string | null): string => {
     if (!id) return 'Unknown Gym';
-    return gymDataCache.get(id)?.name || 'Loading Gym...';
-  }, [gymDataCache]);
+    return gymDetails.get(id)?.name || 'Loading Gym...'; // Read from gymDetails map
+  }, [gymDetails]);
 
-  const fetchAndCacheGymDetails = useCallback(async (gymIds: string[]) => {
-    const validGymIds = gymIds.filter(id => id && typeof id === 'string');
-    if (validGymIds.length === 0) return;
+  // Removed fetchAndCacheGymDetails function
 
-    const idsToFetch = validGymIds.filter(id => !gymDataCache.has(id));
-    if (idsToFetch.length === 0) return;
+  // --- Effect to Fetch Gym Details ---
+  useEffect(() => {
+    const fetchGymDetails = async () => {
+      const idsToFetchSet = new Set<string>();
+      selectedGymIds.forEach(id => idsToFetchSet.add(id));
 
-    console.log("[fetchAndCacheGymDetails] Fetching details for gym IDs:", idsToFetch);
-    try {
-      const { data, error } = await supabase
-          .from('gyms')
-          .select('id, name, city, state, country')
-          .in('id', idsToFetch);
+      console.log('[Gym Details Effect] Selected Gym IDs:', selectedGymIds, 'Active Gym ID:', activeGymId);
 
-      if (error) {
-        console.error('[fetchAndCacheGymDetails] Error fetching gym details:', error);
-      } else if (data) {
-        setGymDataCache(prevCache => {
-          const newCache = new Map(prevCache);
-          data.forEach(gym => newCache.set(gym.id, gym));
-          console.log("[fetchAndCacheGymDetails] Updated gym cache:", newCache);
-          return newCache;
-        });
+      if (activeGymId) {
+        idsToFetchSet.add(activeGymId);
       }
-    } catch (err) {
-      console.error("[fetchAndCacheGymDetails] Unexpected error fetching gym details:", err);
-    }
-  }, [gymDataCache]);
+
+      const idsToFetch = Array.from(idsToFetchSet).filter(Boolean); // Remove null/undefined
+
+      console.log('Ids to fetch:', idsToFetch);
+
+      if (idsToFetch.length === 0) {
+        setGymDetails(new Map()); // Clear details if no gyms are selected/active
+        return;
+      }
+
+      console.log("[Gym Details Effect] Fetching details for gym IDs:", idsToFetch);
+      setIsLoadingGymDetails(true);
+      try {
+        const { data, error } = await supabase
+            .from('gyms')
+            .select('id, name, city, state, country')
+            .in('id', idsToFetch);
+
+        console.log('[Gym Details Effect] Fetch result:', data, error);
+
+        if (error) {
+          console.error('[Gym Details Effect] Error fetching gym details:', error);
+          // Optionally clear details or keep stale data on error? Clearing for now.
+          setGymDetails(new Map());
+        } else if (data) {
+          const newDetails = new Map<string, GymData>();
+          data.forEach(gym => newDetails.set(gym.id, gym));
+          setGymDetails(newDetails);
+          console.log("[Gym Details Effect] Updated gym details:", newDetails);
+        }
+      } catch (err) {
+        console.error("[Gym Details Effect] Unexpected error fetching gym details:", err);
+        setGymDetails(new Map()); // Clear on unexpected error
+      } finally {
+        setIsLoadingGymDetails(false);
+      }
+    };
+
+    fetchGymDetails();
+  }, [activeGymId]); // Re-run when selected or active gyms change
+
 
   // --- User Data Fetching ---
   const fetchUserMetadata = useCallback(async (userId: string): Promise<UserMetadata | null> => {
@@ -86,18 +115,21 @@ function App() {
     try {
       const { data, error } = await supabase
           .from('profiles')
-          .select('*')
+          .select('*') // Select all profile fields
           .eq('user_id', userId)
           .single();
 
-      if (error && error.code !== 'PGRST116') {
+      if (error && error.code !== 'PGRST116') { // PGRST116 means no rows found, which is not an error here
         console.error('[fetchUserMetadata] Error fetching user metadata:', error.message);
-        setUserMetadata(null);
+        setUserMetadata(null); // Clear metadata on error
+        setSelectedGymIds([]); // Clear gym selections
+        setActiveGymId(null);
       } else if (data) {
         console.log("[fetchUserMetadata] User metadata fetched successfully:", data);
         setUserMetadata(data);
         metadataResult = data;
 
+        // Update local state based on fetched metadata
         const fetchedGymIds = data.selected_gym_ids || [];
         const fetchedCurrentGym = data.current_gym_id || null;
         setSelectedGymIds(fetchedGymIds);
@@ -105,10 +137,7 @@ function App() {
         setActiveGymId(newActiveGym);
         console.log("[fetchUserMetadata] Set selectedGymIds:", fetchedGymIds, "Set activeGymId:", newActiveGym);
 
-        const allGymsToFetch = [...fetchedGymIds, fetchedCurrentGym].filter(Boolean) as string[];
-        if (allGymsToFetch.length > 0) {
-          await fetchAndCacheGymDetails(allGymsToFetch);
-        }
+        // No need to call fetchAndCacheGymDetails here, the useEffect handles it
 
         // Determine onboarding/app state based on metadata
         if (fetchedGymIds.length > 0) {
@@ -122,6 +151,7 @@ function App() {
         }
 
       } else {
+        // No profile data found for the user
         console.log("[fetchUserMetadata] No user metadata found for user:", userId);
         setUserMetadata(null);
         setSelectedGymIds([]);
@@ -131,6 +161,7 @@ function App() {
       }
     } catch (err) {
       console.error("[fetchUserMetadata] Unexpected error during fetch:", err);
+      // Reset state on unexpected errors
       setUserMetadata(null);
       setSelectedGymIds([]);
       setActiveGymId(null);
@@ -141,7 +172,8 @@ function App() {
       console.log("[fetchUserMetadata] Finished.");
     }
     return metadataResult;
-  }, [fetchAndCacheGymDetails]);
+  }, []); // Removed fetchAndCacheGymDetails dependency
+
 
   // --- Authentication Handling ---
   useEffect(() => {
@@ -159,10 +191,12 @@ function App() {
       setSelectedGymIds([]);
       setActiveGymId(null);
       setSelectedRouteId(null);
+      setGymDetails(new Map()); // Clear gym details on logout
       setAppView('onboarding');
       setOnboardingStep('auth'); // Go to auth screen after logout/error
       setPreviousAppView('dashboard'); // Reset previous view
       setIsLoadingData(false); // Ensure data loading stops on logout
+      setIsLoadingGymDetails(false); // Ensure gym detail loading stops
     };
 
     // Check initial session state
@@ -204,7 +238,8 @@ function App() {
         } else {
           // Reset data loading flag when a new user logs in, data fetching effect will handle it
           console.log("[Auth Listener] New user logged in, setting isLoadingData to true.");
-          setIsLoadingData(true);
+          setIsLoadingData(true); // Trigger user metadata fetch
+          // Gym details will be fetched by the useEffect hook based on the new user's data
         }
       } else {
         console.log("[Auth Listener] Auth state change detected, but user is the same. No auth state update needed.");
@@ -232,6 +267,7 @@ function App() {
       if (!isLoadingAuth) {
         fetchUserMetadata(currentUser.id).then(() => {
           if (!isMounted) console.log("[Data Fetch Effect] Component unmounted after fetchUserMetadata returned.");
+          // Gym details fetching is handled by the separate useEffect
         }).catch(error => {
           console.error("[Data Fetch Effect] Error during metadata fetch:", error);
           // Cleanup handled within fetchUserMetadata or auth listener
@@ -270,6 +306,14 @@ function App() {
     setAppView(view);
   };
 
+  // New handler to navigate specifically to the gym selection screen
+  const handleNavigateToGymSelection = () => {
+    console.log("Navigating to Gym Selection screen.");
+    setActiveGymId(null); // Clear active gym when navigating to selection
+    setAppView('onboarding');
+    setOnboardingStep('gymSelection');
+  };
+
   // Persist gym selection to profiles
   const persistGymSelection = async (userId: string, gymsToSave: string[], currentGym: string | null) => {
     console.log("Persisting gym selection:", gymsToSave, "Current:", currentGym);
@@ -283,7 +327,7 @@ function App() {
             selected_gym_ids: gymsToSave,
             current_gym_id: currentGym
           }, {
-            onConflict: 'user_id'
+            onConflict: 'user_id' // Use user_id as the conflict target
           });
 
       if (error) {
@@ -293,16 +337,17 @@ function App() {
         await fetchUserMetadata(userId);
       } else {
         console.log("Gym selection saved successfully (upsert).");
+        console.log('Selected Gyms:', gymsToSave, 'Current Gym:', currentGym);
         // Update local state immediately after successful save
-        setSelectedGymIds(gymsToSave);
-        setActiveGymId(currentGym);
-        // Fetch details for newly selected/activated gyms
-        await fetchAndCacheGymDetails([...gymsToSave, currentGym].filter(Boolean) as string[]);
+        setSelectedGymIds(gymsToSave); // Update selected gyms
+        setActiveGymId(currentGym); // Update active gym
+        // The useEffect for gym details will automatically fetch the new details
+
         // Update local metadata state to reflect the change
         setUserMetadata(prev => prev ? { ...prev, selected_gym_ids: gymsToSave, current_gym_id: currentGym } : {
-          // Create a basic metadata object if it was null
+          // Create a basic metadata object if it was null (should ideally not happen if user exists)
           user_id: userId,
-          display_name: currentUser?.profiles?.display_name || 'Climber', // Use existing or default
+          display_name: currentUser?.user_metadata?.display_name || 'Climber', // Use existing or default
           selected_gym_ids: gymsToSave,
           current_gym_id: currentGym,
           created_at: new Date().toISOString(), // Add timestamps
@@ -316,16 +361,18 @@ function App() {
       console.error("Unexpected error persisting gym selection:", err);
       alert("An unexpected error occurred while saving your gym selection.");
       // Optionally refetch metadata to revert local state if save failed
-      await fetchUserMetadata(userId);
+      if (currentUser) await fetchUserMetadata(currentUser.id);
     } finally {
       setIsLoadingData(false); // Hide loading indicator
     }
   };
 
+
   // Called when user confirms gym selection
   const handleGymSelectionComplete = async () => {
     if (selectedGymIds.length > 0 && currentUser) {
       const firstGym = selectedGymIds[0];
+      // Ensure activeGymId is one of the selected ones, default to first if not
       const currentGymToSet = activeGymId && selectedGymIds.includes(activeGymId) ? activeGymId : firstGym;
       await persistGymSelection(currentUser.id, selectedGymIds, currentGymToSet);
       // Navigation is handled inside persistGymSelection on success
@@ -340,13 +387,15 @@ function App() {
 
   // Called from GymSelectionScreen whenever selection changes
   const handleGymSelectionChange = (gymIds: string[]) => {
+    // Update the temporary selection state
     setSelectedGymIds(gymIds);
-    fetchAndCacheGymDetails(gymIds);
-    if (activeGymId && !gymIds.includes(activeGymId)) {
-      setActiveGymId(gymIds.length > 0 ? gymIds[0] : null);
-    } else if (!activeGymId && gymIds.length > 0) {
-      setActiveGymId(gymIds[0]);
-    }
+    // No need to fetch details here, the effect handles it.
+    // Update active gym optimistically if needed
+    // if (activeGymId && !gymIds.includes(activeGymId)) {
+    //   setActiveGymId(gymIds.length > 0 ? gymIds[0] : null);
+    // } else if (!activeGymId && gymIds.length > 0) {
+    //   setActiveGymId(gymIds[0]);
+    // }
   };
 
   // Called from AuthScreen on successful login/signup
@@ -362,11 +411,14 @@ function App() {
   const handleSwitchGym = async (gymId: string) => {
     if (currentUser && gymId !== activeGymId) {
       const previousActiveGymId = activeGymId; // Store previous for potential revert
-      setActiveGymId(gymId); // Update local state immediately
-      setAppView('dashboard');
-      setSelectedRouteId(null);
+      setActiveGymId(gymId); // Update local state immediately for responsiveness
+      setAppView('dashboard'); // Navigate immediately
+      setSelectedRouteId(null); // Clear selected route when switching gyms
       console.log("Switched active gym locally to:", gymId);
-      setIsLoadingData(true); // Show loading while saving
+      // The useEffect will fetch details for the new active gym
+
+      // Persist the change to the backend
+      setIsLoadingData(true); // Show loading while saving (can use isLoadingGymDetails too)
 
       try {
         const { error } = await supabase
@@ -376,16 +428,17 @@ function App() {
 
         if (error) {
           console.error('Error updating current gym:', error);
-          setActiveGymId(previousActiveGymId); // Revert local state
+          setActiveGymId(previousActiveGymId); // Revert local state on error
           alert(`Failed to switch gym: ${error.message}`);
         } else {
           console.log("Current gym updated successfully in DB.");
+          // Update local metadata state
           setUserMetadata(prev => prev ? { ...prev, current_gym_id: gymId } : null);
-          await fetchAndCacheGymDetails([gymId]); // Ensure details are cached
+          // Gym details are handled by the useEffect
         }
       } catch (err) {
         console.error("Unexpected error switching gym:", err);
-        setActiveGymId(previousActiveGymId); // Revert
+        setActiveGymId(previousActiveGymId); // Revert on unexpected error
         alert("An unexpected error occurred while switching gyms.");
       } finally {
         setIsLoadingData(false); // Hide loading
@@ -399,6 +452,11 @@ function App() {
     else if (appView === 'log') { setAppView(previousAppView); }
     else if (appView === 'profile' || appView === 'discover') { setAppView('dashboard'); }
     else if (appView === 'onboarding' && onboardingStep === 'gymSelection') { setOnboardingStep('auth'); }
+    // Add back navigation from gym selection if user is already authenticated
+    else if (appView === 'onboarding' && onboardingStep === 'gymSelection' && isAuthenticated && userMetadata?.selected_gym_ids && userMetadata.selected_gym_ids.length > 0) {
+      setAppView('dashboard'); // Go back to dashboard if they came from there
+      setOnboardingStep('complete');
+    }
   };
 
   const handleBetaSubmitted = () => {
@@ -430,24 +488,25 @@ function App() {
     switch (onboardingStep) {
       case 'welcome': return <WelcomeScreen onNext={() => setOnboardingStep('auth')} />;
       case 'auth': return <AuthScreen onAuthSuccess={handleAuthSuccess} />;
-      case 'gymSelection': return <GymSelectionScreen onGymsSelected={handleGymSelectionChange} onNext={handleGymSelectionComplete} />;
+      case 'gymSelection': return <GymSelectionScreen preSelectedGymsIds={selectedGymIds} onGymsSelected={handleGymSelectionChange} onNext={handleGymSelectionComplete} />;
       default: return null;
     }
   };
 
   const renderApp = () => {
     // --- Loading State ---
-    // Show loading if either initial auth check is happening OR if data is being fetched after auth is confirmed
-    if (isLoadingAuth || (isAuthenticated && isLoadingData)) {
+    // Show loading if initial auth check, user data fetch, or essential gym details fetch is happening
+    const showLoading = isLoadingAuth || (isAuthenticated && (isLoadingData || isLoadingGymDetails));
+    if (showLoading) {
       return <div className="min-h-screen flex items-center justify-center text-brand-gray">Loading App...</div>;
     }
 
     // --- Onboarding Flow ---
-    // Render onboarding if not authenticated OR if authenticated but onboarding isn't complete
-    if (!isAuthenticated || (isAuthenticated && onboardingStep !== 'complete')) {
-      console.log("Rendering Onboarding Flow. IsAuth:", isAuthenticated, "OnboardingStep:", onboardingStep);
+    // Render onboarding if not authenticated OR if authenticated but onboarding isn't complete OR if explicitly navigating to gym selection view
+    if (!isAuthenticated || (isAuthenticated && onboardingStep !== 'complete') || appView === 'onboarding') {
+      console.log("Rendering Onboarding Flow. IsAuth:", isAuthenticated, "OnboardingStep:", onboardingStep, "AppView:", appView);
       // Ensure view is set correctly if authenticated but onboarding incomplete
-      if (isAuthenticated && appView !== 'onboarding') {
+      if (isAuthenticated && onboardingStep !== 'complete' && appView !== 'onboarding') {
         setAppView('onboarding');
         return <div className="min-h-screen flex items-center justify-center text-brand-gray">Loading Onboarding...</div>; // Show loading briefly
       }
@@ -455,9 +514,9 @@ function App() {
     }
 
     // --- Authenticated App Flow ---
-    // This block only runs if isAuthenticated is true AND onboardingStep is 'complete'
+    // This block only runs if isAuthenticated is true AND onboardingStep is 'complete' AND appView is NOT 'onboarding'
     if (isAuthenticated && currentUser && onboardingStep === 'complete') {
-      // If somehow stuck in onboarding view after completing, force to dashboard
+      // If somehow stuck in onboarding view after completing, force to dashboard (redundant check, but safe)
       if (appView === 'onboarding') {
         console.log("User authenticated and onboarding complete, but view is onboarding. Forcing dashboard view.");
         setAppView('dashboard');
@@ -466,7 +525,7 @@ function App() {
 
       console.log("Rendering Authenticated App Flow. Current View:", appView);
 
-      const activeGymName = getGymNameById(activeGymId);
+      const activeGymName = getGymNameById(activeGymId); // Uses updated function reading from gymDetails
       const selectedRouteData = getRouteById(selectedRouteId);
 
       const showNavBar = ['dashboard', 'routes', 'log', 'discover', 'profile'].includes(appView);
@@ -475,7 +534,13 @@ function App() {
       let currentScreen;
       switch (appView) {
         case 'dashboard':
-          currentScreen = <DashboardScreen selectedGyms={selectedGymIds} activeGymId={activeGymId} onSwitchGym={handleSwitchGym} getGymNameById={getGymNameById} />;
+          currentScreen = <DashboardScreen
+              selectedGyms={selectedGymIds}
+              activeGymId={activeGymId}
+              onSwitchGym={handleSwitchGym}
+              getGymNameById={getGymNameById}
+              onNavigateToGymSelection={handleNavigateToGymSelection} // Pass the handler
+          />;
           break;
         case 'routes':
           currentScreen = <RoutesScreen activeGymId={activeGymId} activeGymName={activeGymName} onNavigate={handleNavigate} />;
@@ -509,12 +574,18 @@ function App() {
         default:
           console.warn("Unknown appView:", appView, "Falling back to dashboard.");
           setAppView('dashboard');
-          currentScreen = <DashboardScreen selectedGyms={selectedGymIds} activeGymId={activeGymId} onSwitchGym={handleSwitchGym} getGymNameById={getGymNameById} />;
+          currentScreen = <DashboardScreen
+              selectedGyms={selectedGymIds}
+              activeGymId={activeGymId}
+              onSwitchGym={handleSwitchGym}
+              getGymNameById={getGymNameById}
+              onNavigateToGymSelection={handleNavigateToGymSelection} // Pass the handler
+          />;
       }
 
       return (
           <div className="font-sans">
-            <div className={showNavBar ? "pb-16" : ""}>
+            <div className={showNavBar ? "pb-16" : ""}> {/* Add padding-bottom only if nav bar is shown */}
               {currentScreen}
             </div>
             {navBar}
@@ -523,7 +594,7 @@ function App() {
     }
 
     // --- Fallback (Should ideally be handled by loading or onboarding) ---
-    console.warn("Reached final fallback render. State:", { isLoadingAuth, isLoadingData, isAuthenticated, onboardingStep });
+    console.warn("Reached final fallback render. State:", { isLoadingAuth, isLoadingData, isLoadingGymDetails, isAuthenticated, onboardingStep, appView });
     // If it is reached, it implies !isAuthenticated and not loading.
     return renderOnboarding(); // Show onboarding (which starts with Welcome/Auth)
   }

@@ -4,13 +4,14 @@ import React, { useState, useMemo, useEffect } from 'react';
     import { GymData } from '../../types'; // Import GymData type
 
     interface GymSelectionScreenProps {
+      preSelectedGymsIds: string[]; // Array of pre-selected gym IDs
       onGymsSelected: (selectedGymIds: string[]) => void;
       onNext: () => void;
     }
 
-    const GymSelectionScreen: React.FC<GymSelectionScreenProps> = ({ onGymsSelected, onNext }) => {
+    const GymSelectionScreen: React.FC<GymSelectionScreenProps> = ({ preSelectedGymsIds, onGymsSelected, onNext }) => {
       const [searchTerm, setSearchTerm] = useState('');
-      const [selectedGyms, setSelectedGyms] = useState<Set<string>>(new Set());
+      const [selectedGyms, setSelectedGyms] = useState<Set<string>>(new Set(preSelectedGymsIds));
       const [allGyms, setAllGyms] = useState<GymData[]>([]); // State for fetched gyms
       const [loading, setLoading] = useState(true); // Loading state
       const [error, setError] = useState<string | null>(null); // Error state
