@@ -80,6 +80,8 @@ function App() {
       .eq('user_id', userId)
       .single(); // Expect only one row per user
 
+    console.log("Fetched metadata:", data, "Error:", error);
+
     if (error && error.code !== 'PGRST116') { // Ignore 'PGRST116' (No rows found) error initially
       console.error('Error fetching user metadata:', error);
       setUserMetadata(null); // Clear metadata on error
@@ -106,17 +108,20 @@ function App() {
     console.log("Auth effect running. Current appView:", appView);
 
     const fetchInitialData = async (user: User) => {
+      console.log("Fetching initial data for user:", user.id);
       setCurrentUser(user);
       setIsAuthenticated(true);
       const metadata = await fetchUserMetadata(user.id);
 
       if (metadata && metadata.selected_gym_ids && metadata.selected_gym_ids.length > 0) {
+        console.log("User has completed onboarding.");
         setOnboardingStep('complete');
         // Navigate to dashboard only if currently in onboarding or initial load state
         if (appView === 'onboarding') {
             setAppView('dashboard');
         }
       } else {
+        console.log("User exists but hasn't completed gym selection");
         // User exists but hasn't completed gym selection
         setOnboardingStep('gymSelection');
         setAppView('onboarding'); // Stay in onboarding flow
@@ -153,6 +158,8 @@ function App() {
     const { data: authListener } = supabase.auth.onAuthStateChange(async (_event, session) => {
       console.log("Auth state changed:", _event, "User:", session?.user?.id);
       const user = session?.user ?? null;
+
+      console.log("Current user:", currentUser?.id, "New user:", user?.id);
 
       if (user) {
         // User logged in or session refreshed
@@ -205,13 +212,29 @@ function App() {
   // Persist gym selection to user_metadata
   const persistGymSelection = async (userId: string, gymsToSave: string[], currentGym: string | null) => {
     console.log("Persisting gym selection:", gymsToSave, "Current:", currentGym);
-    const { error } = await supabase
+
+    // Check if user_metadata row exists, insert if not (upsert)
+    const { data: existingMetadata } = await supabase
       .from('user_metadata')
-      .update({
-        selected_gym_ids: gymsToSave,
-        current_gym_id: currentGym ?? (gymsToSave.length > 0 ? gymsToSave[0] : null) // Set current_gym_id
-      })
-      .eq('user_id', userId);
+      .select('user_id')
+      .eq('user_id', userId)
+      .single();
+
+    let error;
+    if (!existingMetadata) {
+      console.log("No existing metadata found, inserting new row.");
+       const response = await supabase
+          .from('user_metadata')
+            .insert([{ user_id: userId, selected_gym_ids: gymsToSave, current_gym_id: currentGym }]);
+         error = response.error;
+    } else {
+        console.log("Existing metadata found, updating selected gyms.");
+         const response = await supabase
+             .from('user_metadata')
+                .update({ selected_gym_ids: gymsToSave, current_gym_id: currentGym })
+                .eq('user_id', userId);
+            error = response.error;
+    }
 
     if (error) {
       console.error('Error saving selected gyms:', error);
@@ -224,14 +247,17 @@ function App() {
   };
 
   // Called when user confirms gym selection
-  const handleGymSelectionComplete = () => {
+  const handleGymSelectionComplete = async () => {
     if (selectedGymIds.length > 0 && currentUser) {
       const firstGym = selectedGymIds[0];
       const currentGymToSet = activeGymId || firstGym; // Use existing active or default to first selected
       setActiveGymId(currentGymToSet); // Update local state immediately
+      await persistGymSelection(currentUser.id, selectedGymIds, currentGymToSet); // Save to DB
+      console.log("Gym selection complete, switching to dashboard.");
       setOnboardingStep('complete');
+      console.log("Switching to dashboard view.");
       setAppView('dashboard');
-      persistGymSelection(currentUser.id, selectedGymIds, currentGymToSet); // Save to DB
+      console.log("Fetching gym details for selected gyms.");
     } else {
       alert("Please select at least one gym.");
     }
@@ -241,7 +267,7 @@ function App() {
   const handleGymSelectionChange = (gymIds: string[]) => {
     setSelectedGymIds(gymIds);
     // Fetch details for newly selected gyms if not already cached
-    fetchAndCacheGymDetails(gymIds);
+    // fetchAndCacheGymDetails(gymIds);
     // Optionally update activeGymId if the current one is removed
     if (activeGymId && !gymIds.includes(activeGymId)) {
         setActiveGymId(gymIds.length > 0 ? gymIds[0] : null);
