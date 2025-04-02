@@ -3,19 +3,23 @@ import type { User } from '@supabase/supabase-js';
 // --- Core Data Structures ---
 
 export interface RouteData {
-  id: string; // Unique identifier for the route
-  name: string;
-  grade: string; // e.g., "V5", "5.11a"
-  gradeColor: string; // Tailwind color class name (e.g., 'accent-red')
-  location: string; // Wall or area within the gym
-  setter?: string; // Optional setter name
-  dateSet: string; // ISO 8601 date string
-  status: 'sent' | 'attempted' | 'unseen'; // User's progress status
-  betaAvailable: boolean; // Flag if any beta exists
-  description?: string; // Optional route description
-  imageUrl?: string; // Optional URL for a photo of the route
-  gym_id?: string; // Foreign key to the gym this route belongs to
+  id: string; // Unique identifier for the route (matches Supabase)
+  gym_id: string; // Foreign key to the gym this route belongs to (matches Supabase)
+  name: string; // matches Supabase
+  grade: string; // matches Supabase
+  grade_color: string; // matches Supabase (snake_case from DB)
+  location: string; // matches Supabase
+  setter?: string | null; // matches Supabase (optional)
+  date_set: string; // matches Supabase (ISO 8601 date string)
+  description?: string | null; // matches Supabase (optional)
+  image_url?: string | null; // matches Supabase (optional)
+  created_at?: string; // matches Supabase (optional, added by default)
+
+  // --- Fields NOT directly in 'routes' table (will be added later or derived) ---
+  status?: 'sent' | 'attempted' | 'unseen'; // User's progress status (optional for now)
+  betaAvailable?: boolean; // Flag if any beta exists (optional for now)
 }
+
 
 export interface GymData {
   id: string; // UUID from Supabase

@@ -1,37 +1,92 @@
-import React, { useState } from 'react';
-import { Search, SlidersHorizontal, ChevronDown } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Search, SlidersHorizontal, ChevronDown, Loader2 } from 'lucide-react';
 import RouteCard from './RouteCard';
-import { RouteData, AppView } from '../../types'; // Import AppView
+import { RouteData, AppView } from '../../types';
+import { supabase } from '../../supabaseClient'; // Import Supabase client
 
 interface RoutesScreenProps {
   activeGymId: string | null;
   activeGymName: string;
-  onNavigate: (view: AppView, routeId?: string) => void; // Add navigation handler prop
+  onNavigate: (view: AppView, routeId?: string) => void;
 }
-
-// --- Placeholder Data ---
-const placeholderRoutes: RouteData[] = [
-  { id: 'r1', name: 'Crimson Dyno', grade: 'V5', gradeColor: 'accent-red', location: 'Overhang Cave', setter: 'Admin', dateSet: '2024-03-10', status: 'sent', betaAvailable: true, description: 'Explosive move off the starting holds to a big jug.', imageUrl: 'https://images.unsplash.com/photo-1564769662533-4f00a87b4056?q=80&w=1974&auto=format&fit=crop&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D' },
-  { id: 'r2', name: 'Blue Traverse', grade: 'V3', gradeColor: 'accent-blue', location: 'Slab Wall', setter: 'Admin', dateSet: '2024-03-08', status: 'attempted', betaAvailable: false, description: 'Technical footwork required on small holds.' },
-  { id: 'r3', name: 'Sunshine Arete', grade: 'V4', gradeColor: 'accent-yellow', location: 'Main Boulder', setter: 'Jane D.', dateSet: '2024-03-05', status: 'unseen', betaAvailable: true, description: 'Balancey moves up the arete feature.', imageUrl: 'https://images.unsplash.com/photo-1610414870675-5579095849e1?q=80&w=1974&auto=format&fit=crop&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D' },
-  { id: 'r4', name: 'Green Slab Master', grade: 'V2', gradeColor: 'brand-green', location: 'Slab Wall', setter: 'Admin', dateSet: '2024-03-01', status: 'sent', betaAvailable: false },
-  { id: 'r5', name: 'Purple Pain', grade: 'V6', gradeColor: 'accent-purple', location: 'Overhang Cave', setter: 'Mike R.', dateSet: '2024-02-28', status: 'unseen', betaAvailable: true },
-  { id: 'r6', name: 'The Gray Crack', grade: 'V1', gradeColor: 'brand-gray', location: 'Training Area', setter: 'Admin', dateSet: '2024-02-25', status: 'attempted', betaAvailable: false },
-];
-// --- End Placeholder Data ---
 
 const RoutesScreen: React.FC<RoutesScreenProps> = ({ activeGymId, activeGymName, onNavigate }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [showFilters, setShowFilters] = useState(false);
+  const [routes, setRoutes] = useState<RouteData[]>([]); // State for fetched routes
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   // TODO: Add state for actual filters (grade, wall, status, sort)
 
-  // TODO: Implement filtering logic based on state
-  const filteredRoutes = placeholderRoutes.filter(route =>
-    route.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    route.grade.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    route.location.toLowerCase().includes(searchTerm.toLowerCase())
-    // Add filtering based on activeGymId if routes were gym-specific
-  );
+  // Fetch routes when activeGymId changes
+  useEffect(() => {
+    const fetchRoutes = async () => {
+      if (!activeGymId) {
+        setRoutes([]); // Clear routes if no gym is selected
+        setError(null);
+        setLoading(false);
+        return;
+      }
+
+      console.log(`[RoutesScreen] Fetching routes for gym ID: ${activeGymId}`);
+      setLoading(true);
+      setError(null);
+      setRoutes([]); // Clear previous routes
+
+      try {
+        const { data, error: fetchError } = await supabase
+          .from('routes')
+          .select('*') // Select all columns
+          .eq('gym_id', activeGymId) // Filter by the active gym
+          .order('date_set', { ascending: false }); // Order by newest first
+
+        if (fetchError) {
+          console.error('[RoutesScreen] Error fetching routes:', fetchError);
+          setError(`Failed to load routes: ${fetchError.message}`);
+          setRoutes([]);
+        } else if (data) {
+          console.log('[RoutesScreen] Routes fetched successfully:', data);
+          // Map Supabase data (snake_case) to RouteData (camelCase where needed)
+          // Note: Supabase client might handle this automatically depending on config,
+          // but explicit mapping is safer if needed. Here, we assume direct mapping works for now.
+          // We need to map `grade_color` -> `gradeColor` for the RouteCard component.
+          // Also add placeholder/default values for status/betaAvailable for now.
+          const mappedData: RouteData[] = data.map(route => ({
+            ...route,
+            gradeColor: route.grade_color, // Map snake_case to camelCase
+            dateSet: route.date_set, // Ensure correct field name
+            imageUrl: route.image_url, // Ensure correct field name
+            // Add placeholder status/beta for UI compatibility until implemented
+            status: 'unseen', // Placeholder
+            betaAvailable: Math.random() > 0.5, // Placeholder
+          }));
+          setRoutes(mappedData);
+        } else {
+          setRoutes([]); // No data found
+        }
+      } catch (err) {
+        console.error("[RoutesScreen] Unexpected error fetching routes:", err);
+        setError("An unexpected error occurred while fetching routes.");
+        setRoutes([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchRoutes();
+  }, [activeGymId]); // Re-run effect when activeGymId changes
+
+  // Memoize filtered routes to avoid recalculation on every render
+  const filteredRoutes = useMemo(() => {
+    return routes.filter(route =>
+      (route.name?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
+      (route.grade?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
+      (route.location?.toLowerCase() || '').includes(searchTerm.toLowerCase())
+      // TODO: Add more filtering based on filter state
+    );
+  }, [routes, searchTerm]); // Recalculate only when routes or searchTerm change
+
+  // --- Render Logic ---
 
   if (!activeGymId) {
     return <div className="p-4 pt-16 text-center text-brand-gray">Please select a gym first.</div>;
@@ -82,7 +137,14 @@ const RoutesScreen: React.FC<RoutesScreenProps> = ({ activeGymId, activeGymName,
 
       {/* Route List */}
       <main className="flex-grow p-4 space-y-3 overflow-y-auto pb-20">
-        {filteredRoutes.length > 0 ? (
+        {loading ? (
+          <div className="flex justify-center items-center pt-10">
+            <Loader2 className="animate-spin text-accent-blue mr-2" size={24} />
+            <p className="text-brand-gray">Loading routes...</p>
+          </div>
+        ) : error ? (
+          <p className="text-center text-red-500 mt-8">{error}</p>
+        ) : filteredRoutes.length > 0 ? (
           filteredRoutes.map(route => (
             <RouteCard
               key={route.id}
@@ -91,7 +153,9 @@ const RoutesScreen: React.FC<RoutesScreenProps> = ({ activeGymId, activeGymName,
             />
           ))
         ) : (
-          <p className="text-center text-gray-500 mt-8">No routes found matching your criteria.</p>
+          <p className="text-center text-gray-500 mt-8">
+            {routes.length === 0 ? 'No routes found for this gym yet.' : 'No routes found matching your criteria.'}
+          </p>
         )}
       </main>
 
