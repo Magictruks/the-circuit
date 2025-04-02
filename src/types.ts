@@ -67,14 +67,18 @@ export interface BetaContent {
   // Add downvotes, key move tags, etc. if needed
 }
 
+// Updated Comment type to match DB schema
 export interface Comment {
-  id: string;
-  routeId: string;
-  userId: string;
-  username: string;
-  userAvatarUrl?: string;
-  text: string;
-  timestamp: string; // ISO 8601 date string
+  id: string; // uuid from DB
+  route_id: string; // uuid from DB
+  user_id: string; // uuid from DB (references auth.users.id)
+  comment_text: string; // text from DB
+  created_at: string; // timestamptz from DB
+  updated_at: string; // timestamptz from DB
+
+  // Optional fields (to be populated by joining/fetching profile data later)
+  display_name?: string; // User's display name
+  avatar_url?: string; // User's avatar URL
 }
 
 // --- App Navigation & State ---
