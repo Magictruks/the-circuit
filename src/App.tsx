@@ -345,7 +345,13 @@ function App() {
     }
   };
 
-  const handleBetaSubmitted = () => { setAppView('routeDetail'); };
+  const handleBetaSubmitted = () => {
+    // Navigate back to route detail after submitting beta
+    setAppView('routeDetail');
+    // TODO: Optionally trigger a refetch of beta data in RouteDetailScreen
+    // This might involve passing a callback or using a global state/context
+  };
+
   const handleLogSubmitted = () => { setAppView(previousAppView); };
 
   const handleLogout = async () => {
@@ -416,7 +422,12 @@ function App() {
            } else if (routeDetailError || !selectedRouteData) {
                currentScreen = <div className="p-4 pt-16 text-center text-red-500">Error loading route context: {routeDetailError || 'Route not found.'} <button onClick={handleBack} className="underline">Go Back</button></div>;
            } else {
-               currentScreen = <AddBetaScreen route={selectedRouteData} onBack={handleBack} onSubmitSuccess={handleBetaSubmitted} />;
+               currentScreen = <AddBetaScreen
+                   currentUser={currentUser} // Pass current user
+                   route={selectedRouteData}
+                   onBack={handleBack}
+                   onSubmitSuccess={handleBetaSubmitted}
+               />;
            }
            break;
         case 'log':

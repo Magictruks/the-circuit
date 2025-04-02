@@ -27,10 +27,6 @@ interface RouteDetailScreenProps {
 // Default progress state
 const defaultProgress: UserProgress = { attempts: 0, sentDate: null, rating: null, notes: "", wishlist: false };
 
-// --- Placeholder Data for Beta (Keep for now) ---
-const placeholderBeta: BetaContent[] = [];
-// --- End Placeholder Data ---
-
 const getGradeColorClass = (colorName: string | undefined): string => {
   if (!colorName) return 'bg-gray-400';
   const colorMap: { [key: string]: string } = {
@@ -43,11 +39,10 @@ const getGradeColorClass = (colorName: string | undefined): string => {
 
 // Helper to get display name (simple version for now)
 const getUserDisplayName = (userId: string, currentUser: User | null): string => {
-    // In a real app, fetch profile data here based on userId
-    // For now, just return a placeholder or the current user's name if it matches
     if (currentUser && userId === currentUser.id) {
         return currentUser.user_metadata?.display_name || 'You';
     }
+    // TODO: Fetch profile data for other users later
     return `User ${userId.substring(0, 6)}...`; // Placeholder
 };
 
@@ -57,8 +52,10 @@ const RouteDetailScreen: React.FC<RouteDetailScreenProps> = ({ currentUser, rout
   const [isSavingProgress, setIsSavingProgress] = useState(false);
   const [progressError, setProgressError] = useState<string | null>(null);
 
-  // State for Beta (still using placeholders)
-  const [betaItems, setBetaItems] = useState<BetaContent[]>(placeholderBeta);
+  // State for Beta (fetched from DB)
+  const [betaItems, setBetaItems] = useState<BetaContent[]>([]);
+  const [isLoadingBeta, setIsLoadingBeta] = useState(false);
+  const [betaError, setBetaError] = useState<string | null>(null);
   const [activeBetaTab, setActiveBetaTab] = useState<BetaType>('text');
 
   // State for Comments (fetched from DB)
@@ -111,49 +108,63 @@ const RouteDetailScreen: React.FC<RouteDetailScreenProps> = ({ currentUser, rout
 
   // --- Fetch Comments ---
   const fetchComments = useCallback(async () => {
-    if (!route) { setComments([]); return; } // No route, no comments
-    console.log(`[RouteDetail] Fetching comments for route ${route.id}`);
-    setIsLoadingComments(true);
-    setCommentsError(null);
+    if (!route) { setComments([]); return; }
+    setIsLoadingComments(true); setCommentsError(null);
     try {
       const { data, error: fetchError } = await supabase
-        .from('route_comments')
+        .from('route_comments').select('*') // TODO: Join with profiles later
+        .eq('route_id', route.id).order('created_at', { ascending: true });
+      if (fetchError) { setCommentsError('Failed to load comments.'); setComments([]); }
+      else if (data) { setComments(data as Comment[]); } // TODO: Map profile data
+      else { setComments([]); }
+    } catch (err) { setCommentsError("An unexpected error occurred."); setComments([]); }
+    finally { setIsLoadingComments(false); }
+  }, [route]);
+
+  useEffect(() => {
+    if (route && !isLoading) { fetchComments(); }
+    else { setComments([]); setIsLoadingComments(false); setCommentsError(null); }
+  }, [route, isLoading, fetchComments]);
+
+
+  // --- Fetch Beta ---
+  const fetchBeta = useCallback(async () => {
+    if (!route) { setBetaItems([]); return; }
+    console.log(`[RouteDetail] Fetching beta for route ${route.id}`);
+    setIsLoadingBeta(true); setBetaError(null);
+    try {
+      // TODO: Join with profiles later to get display_name, avatar_url
+      const { data, error: fetchError } = await supabase
+        .from('route_beta')
         .select('*') // Select all columns for now
-        // TODO: Select profile data later: .select('*, profiles(display_name, avatar_url)')
         .eq('route_id', route.id)
-        .order('created_at', { ascending: true }); // Show oldest first
+        .order('created_at', { ascending: false }); // Show newest beta first
 
       if (fetchError) {
-        console.error('[RouteDetail] Error fetching comments:', fetchError);
-        setCommentsError('Failed to load comments.');
-        setComments([]);
+        console.error('[RouteDetail] Error fetching beta:', fetchError);
+        setBetaError('Failed to load beta.');
+        setBetaItems([]);
       } else if (data) {
-        console.log('[RouteDetail] Comments fetched:', data);
+        console.log('[RouteDetail] Beta fetched:', data);
         // TODO: Map profile data if joined later
-        setComments(data as Comment[]); // Cast for now, ensure type matches
+        setBetaItems(data as BetaContent[]); // Cast for now
       } else {
-        setComments([]); // No comments found
+        setBetaItems([]); // No beta found
       }
     } catch (err) {
-      console.error("[RouteDetail] Unexpected error fetching comments:", err);
-      setCommentsError("An unexpected error occurred while loading comments.");
-      setComments([]);
+      console.error("[RouteDetail] Unexpected error fetching beta:", err);
+      setBetaError("An unexpected error occurred while loading beta.");
+      setBetaItems([]);
     } finally {
-      setIsLoadingComments(false);
+      setIsLoadingBeta(false);
     }
   }, [route]); // Dependency: route
 
-  // Fetch comments when route data is available
+  // Fetch beta when route data is available
   useEffect(() => {
-    if (route && !isLoading) { // Ensure route is loaded
-      fetchComments();
-    } else {
-      // Reset comments if route changes or becomes unavailable
-      setComments([]);
-      setIsLoadingComments(false);
-      setCommentsError(null);
-    }
-  }, [route, isLoading, fetchComments]); // Add fetchComments to dependencies
+    if (route && !isLoading) { fetchBeta(); }
+    else { setBetaItems([]); setIsLoadingBeta(false); setBetaError(null); }
+  }, [route, isLoading, fetchBeta]); // Add fetchBeta to dependencies
 
 
   // --- Handlers for user interactions (Progress) ---
@@ -169,38 +180,16 @@ const RouteDetailScreen: React.FC<RouteDetailScreenProps> = ({ currentUser, rout
   const handlePostComment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentUser || !route || !newComment.trim()) return;
-
-    setIsPostingComment(true);
-    setCommentsError(null);
+    setIsPostingComment(true); setCommentsError(null);
     const commentText = newComment.trim();
-
     try {
       const { data, error: insertError } = await supabase
-        .from('route_comments')
-        .insert({
-          route_id: route.id,
-          user_id: currentUser.id,
-          comment_text: commentText,
-        })
-        .select() // Select the newly inserted row
-        .single(); // Expect a single row back
-
-      if (insertError) {
-        console.error('[RouteDetail] Error posting comment:', insertError);
-        setCommentsError(`Failed to post comment: ${insertError.message}`);
-      } else if (data) {
-        console.log('[RouteDetail] Comment posted successfully:', data);
-        setNewComment(''); // Clear input field
-        // Optimistic update (add comment locally) or refetch
-        // Refetching is simpler for now:
-        await fetchComments();
-      }
-    } catch (err) {
-      console.error("[RouteDetail] Unexpected error posting comment:", err);
-      setCommentsError("An unexpected error occurred while posting your comment.");
-    } finally {
-      setIsPostingComment(false);
-    }
+        .from('route_comments').insert({ route_id: route.id, user_id: currentUser.id, comment_text: commentText })
+        .select().single();
+      if (insertError) { setCommentsError(`Failed to post comment: ${insertError.message}`); }
+      else if (data) { setNewComment(''); await fetchComments(); } // Refetch after posting
+    } catch (err) { setCommentsError("An unexpected error occurred."); }
+    finally { setIsPostingComment(false); }
   };
 
 
@@ -211,7 +200,8 @@ const RouteDetailScreen: React.FC<RouteDetailScreenProps> = ({ currentUser, rout
 
   // Destructure route data
   const { id: routeId, name, grade, grade_color, location, setter, date_set, description, image_url } = route;
-  const filteredBeta = betaItems.filter(beta => beta.type === activeBetaTab);
+  // Filter beta based on the active tab *after* fetching
+  const filteredBeta = betaItems.filter(beta => beta.beta_type === activeBetaTab);
 
   return (
     <div className="min-h-screen bg-gray-100">
@@ -260,53 +250,68 @@ const RouteDetailScreen: React.FC<RouteDetailScreenProps> = ({ currentUser, rout
         <section className="bg-white rounded-lg shadow">
            <div className="flex justify-between items-center p-4 border-b"> <h2 className="text-lg font-semibold text-brand-gray">Community Beta</h2> <button onClick={() => onNavigate('addBeta', routeId)} className="bg-accent-blue text-white text-xs font-semibold px-3 py-1 rounded-full hover:bg-opacity-90 flex items-center gap-1"> <PlusCircle size={14}/> Add Beta </button> </div>
            <div className="flex border-b"> <button onClick={() => setActiveBetaTab('text')} className={`flex-1 py-2 text-center text-sm font-medium ${activeBetaTab === 'text' ? 'text-accent-blue border-b-2 border-accent-blue' : 'text-brand-gray hover:bg-gray-50'}`}><MessageSquareText size={16} className="inline mr-1 mb-0.5"/> Tips</button> <button onClick={() => setActiveBetaTab('video')} className={`flex-1 py-2 text-center text-sm font-medium ${activeBetaTab === 'video' ? 'text-accent-blue border-b-2 border-accent-blue' : 'text-brand-gray hover:bg-gray-50'}`}><Video size={16} className="inline mr-1 mb-0.5"/> Videos</button> <button onClick={() => setActiveBetaTab('drawing')} className={`flex-1 py-2 text-center text-sm font-medium ${activeBetaTab === 'drawing' ? 'text-accent-blue border-b-2 border-accent-blue' : 'text-brand-gray hover:bg-gray-50'}`}><PencilLine size={16} className="inline mr-1 mb-0.5"/> Drawings</button> </div>
-           <div className="p-4 space-y-4 max-h-60 overflow-y-auto"> {filteredBeta.length > 0 ? filteredBeta.map(beta => ( <div key={beta.id} className="flex gap-3 border-b pb-3 last:border-b-0"> <img src={beta.userAvatarUrl || `https://ui-avatars.com/api/?name=${beta.username}&background=random`} alt={beta.username} className="w-8 h-8 rounded-full flex-shrink-0 mt-1"/> <div className="flex-grow"> <p className="text-sm font-medium text-brand-gray">{beta.username}</p> {beta.type === 'text' && <p className="text-sm text-gray-700 mt-1">{beta.textContent}</p>} {beta.type === 'video' && <a href={beta.contentUrl} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline mt-1 block">Watch Video <Video size={14} className="inline ml-1"/></a>} <div className="flex items-center gap-3 text-xs text-gray-500 mt-2"> <span>{new Date(beta.timestamp).toLocaleDateString()}</span> <button className="flex items-center gap-1 hover:text-green-600"><ThumbsUp size={14}/> {beta.upvotes}</button> <button className="flex items-center gap-1 hover:text-red-600"><ThumbsDown size={14}/> {/* Downvote count */}</button> </div> </div> </div> )) : ( <p className="text-sm text-center text-gray-500 py-4">No {activeBetaTab} beta available yet.</p> )} </div>
+           {/* Beta Loading/Error/Content */}
+           <div className="p-4 space-y-4 max-h-60 overflow-y-auto">
+              {isLoadingBeta && <div className="flex justify-center items-center py-4"><Loader2 className="animate-spin text-accent-blue" size={24} /></div>}
+              {betaError && <p className="text-red-500 text-sm text-center py-4">{betaError}</p>}
+              {!isLoadingBeta && !betaError && (
+                 filteredBeta.length > 0 ? filteredBeta.map(beta => (
+                   <div key={beta.id} className="flex gap-3 border-b pb-3 last:border-b-0">
+                      {/* TODO: Replace with actual avatar */}
+                      <img src={beta.avatar_url || `https://ui-avatars.com/api/?name=${getUserDisplayName(beta.user_id, currentUser)}&background=random`} alt="User avatar" className="w-8 h-8 rounded-full flex-shrink-0 mt-1"/>
+                      <div className="flex-grow">
+                         {/* TODO: Replace with actual display name */}
+                         <p className="text-sm font-medium text-brand-gray">{beta.display_name || getUserDisplayName(beta.user_id, currentUser)}</p>
+                         {/* Display content based on type */}
+                         {beta.beta_type === 'text' && <p className="text-sm text-gray-700 mt-1">{beta.text_content}</p>}
+                         {beta.beta_type === 'video' && beta.content_url && (
+                            <a href={beta.content_url} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline mt-1 block">Watch Video <Video size={14} className="inline ml-1"/></a>
+                         )}
+                         {beta.beta_type === 'drawing' && beta.content_url && (
+                            // Display image for drawing - adjust styling as needed
+                            <img src={beta.content_url} alt="Drawing beta" className="mt-1 border rounded max-w-full h-auto" />
+                            // Or provide a link:
+                            // <a href={beta.content_url} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline mt-1 block">View Drawing <PencilLine size={14} className="inline ml-1"/></a>
+                         )}
+                         <div className="flex items-center gap-3 text-xs text-gray-500 mt-2">
+                            <span>{new Date(beta.created_at).toLocaleDateString()}</span>
+                            {/* TODO: Implement voting */}
+                            <button className="flex items-center gap-1 hover:text-green-600"><ThumbsUp size={14}/> {beta.upvotes}</button>
+                            <button className="flex items-center gap-1 hover:text-red-600"><ThumbsDown size={14}/> {/* Downvote count */}</button>
+                         </div>
+                      </div>
+                   </div>
+                 )) : (
+                   <p className="text-sm text-center text-gray-500 py-4">No {activeBetaTab} beta available yet.</p>
+                 )
+              )}
+           </div>
         </section>
 
         {/* Discussion Section */}
         <section className="bg-white p-4 rounded-lg shadow">
            <h2 className="text-lg font-semibold text-brand-gray mb-3">Discussion</h2>
-           {/* Loading/Error state for comments */}
            {isLoadingComments && <div className="flex justify-center items-center py-4"><Loader2 className="animate-spin text-accent-blue" size={24} /></div>}
            {commentsError && <p className="text-red-500 text-sm text-center py-4">{commentsError}</p>}
            {!isLoadingComments && !commentsError && (
              <div className="space-y-4 mb-4 max-h-60 overflow-y-auto">
                 {comments.length > 0 ? comments.map(comment => (
                   <div key={comment.id} className="flex gap-3 border-b pb-3 last:border-b-0">
-                     {/* TODO: Replace with actual avatar */}
                      <img src={comment.avatar_url || `https://ui-avatars.com/api/?name=${getUserDisplayName(comment.user_id, currentUser)}&background=random`} alt="User avatar" className="w-8 h-8 rounded-full flex-shrink-0 mt-1"/>
                      <div className="flex-grow">
                         <p className="text-sm">
-                           {/* TODO: Replace with actual display name */}
                            <span className="font-medium text-brand-gray">{comment.display_name || getUserDisplayName(comment.user_id, currentUser)}</span>
                            <span className="text-xs text-gray-400 ml-1">{new Date(comment.created_at).toLocaleTimeString([], {hour: 'numeric', minute:'2-digit'})}</span>
                         </p>
                         <p className="text-sm text-gray-700 mt-1">{comment.comment_text}</p>
-                        {/* TODO: Add edit/delete buttons for comment owner */}
                      </div>
                   </div>
-                )) : (
-                  <p className="text-sm text-center text-gray-500 py-4">No comments yet. Start the discussion!</p>
-                )}
+                )) : ( <p className="text-sm text-center text-gray-500 py-4">No comments yet. Start the discussion!</p> )}
              </div>
            )}
-           {/* Comment Input Form */}
            <form onSubmit={handlePostComment} className="flex gap-2 items-center pt-2 border-t">
-              <input
-                 type="text"
-                 value={newComment}
-                 onChange={(e) => setNewComment(e.target.value)}
-                 placeholder={currentUser ? "Add a comment..." : "Log in to comment"}
-                 className="flex-grow p-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-accent-blue disabled:bg-gray-100"
-                 disabled={!currentUser || isPostingComment} // Disable if not logged in or posting
-              />
-              <button
-                 type="submit"
-                 className="bg-accent-blue text-white p-2 rounded-md hover:bg-opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
-                 disabled={!currentUser || !newComment.trim() || isPostingComment} // Disable if not logged in, empty, or posting
-              >
-                 {isPostingComment ? <Loader2 size={20} className="animate-spin"/> : <Send size={20} />}
-              </button>
+              <input type="text" value={newComment} onChange={(e) => setNewComment(e.target.value)} placeholder={currentUser ? "Add a comment..." : "Log in to comment"} className="flex-grow p-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-accent-blue disabled:bg-gray-100" disabled={!currentUser || isPostingComment} />
+              <button type="submit" className="bg-accent-blue text-white p-2 rounded-md hover:bg-opacity-90 disabled:opacity-50 disabled:cursor-not-allowed" disabled={!currentUser || !newComment.trim() || isPostingComment}> {isPostingComment ? <Loader2 size={20} className="animate-spin"/> : <Send size={20} />} </button>
            </form>
         </section>
 

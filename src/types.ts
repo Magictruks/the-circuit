@@ -53,19 +53,24 @@ export interface UserProgress {
 
 export type BetaType = 'text' | 'video' | 'drawing'; // Drawing might be image upload initially
 
+// Updated BetaContent to match route_beta table schema
 export interface BetaContent {
-  id: string; // Unique ID for the beta item
-  routeId: string; // Foreign key to RouteData
-  userId: string; // Foreign key to User profile/auth
-  username: string; // Display name of the user who submitted
-  userAvatarUrl?: string; // Optional avatar URL
-  type: BetaType;
-  textContent?: string; // Content if type is 'text'
-  contentUrl?: string; // URL if type is 'video' or 'drawing' (e.g., Supabase Storage URL)
-  timestamp: string; // ISO 8601 date string of submission
-  upvotes: number;
-  // Add downvotes, key move tags, etc. if needed
+  id: string; // uuid from DB
+  route_id: string; // uuid from DB
+  user_id: string; // uuid from DB (references auth.users.id)
+  beta_type: BetaType; // text from DB ('text', 'video', 'drawing')
+  text_content?: string | null; // text from DB (nullable)
+  content_url?: string | null; // text from DB (nullable, URL for video/drawing)
+  key_move?: string | null; // text from DB (nullable)
+  upvotes: number; // integer from DB
+  created_at: string; // timestamptz from DB
+  updated_at: string; // timestamptz from DB
+
+  // Optional fields (to be populated by joining/fetching profile data later)
+  display_name?: string; // User's display name
+  avatar_url?: string; // User's avatar URL
 }
+
 
 // Updated Comment type to match DB schema
 export interface Comment {
