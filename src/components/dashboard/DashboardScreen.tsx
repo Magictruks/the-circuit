@@ -1,30 +1,14 @@
 import React, { useState } from 'react';
 import { ChevronDown, Search, Bell, CheckCircle, Circle, HelpCircle } from 'lucide-react';
-// Removed BottomNavBar import, it's now managed by App.tsx
 
 interface DashboardScreenProps {
-  selectedGyms: string[];
+  selectedGyms: string[]; // Now gym IDs
   activeGymId: string | null;
-  onSwitchGym: (gymId: string) => void; // Callback to switch gym in App state
+  onSwitchGym: (gymId: string) => void;
+  getGymNameById: (id: string | null) => string; // Function to get gym name
 }
 
-// Placeholder function to get gym name from ID (replace with actual data fetching)
-const getGymNameById = (id: string): string => {
-    const gyms: { [key: string]: string } = {
-        gym1: 'Summit Climbing',
-        gym2: 'Movement',
-        gym3: 'Brooklyn Boulders',
-        gym4: 'Sender One',
-        gym5: 'The Cliffs',
-        gym6: 'Planet Granite',
-        gym7: 'Austin Bouldering Project',
-        gym8: 'Vertical World',
-    };
-    return gyms[id] || 'Unknown Gym';
-};
-
-
-const DashboardScreen: React.FC<DashboardScreenProps> = ({ selectedGyms, activeGymId, onSwitchGym }) => {
+const DashboardScreen: React.FC<DashboardScreenProps> = ({ selectedGyms, activeGymId, onSwitchGym, getGymNameById }) => {
   const [showGymSelector, setShowGymSelector] = useState(false);
 
   const handleGymSelect = (gymId: string) => {
@@ -32,7 +16,7 @@ const DashboardScreen: React.FC<DashboardScreenProps> = ({ selectedGyms, activeG
     setShowGymSelector(false); // Close selector after choosing
   };
 
-  const activeGymName = activeGymId ? getGymNameById(activeGymId) : 'No Gym Selected';
+  const activeGymName = getGymNameById(activeGymId); // Use the passed function
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
@@ -43,22 +27,22 @@ const DashboardScreen: React.FC<DashboardScreenProps> = ({ selectedGyms, activeG
           <button
             onClick={() => setShowGymSelector(!showGymSelector)}
             className="flex items-center text-brand-green hover:text-opacity-80"
-            disabled={selectedGyms.length <= 1} // Disable if only one gym
+            disabled={selectedGyms.length <= 1} // Disable if only one gym or none selected
           >
-            <h1 className="text-xl font-bold mr-1">{activeGymName}</h1>
+            <h1 className="text-xl font-bold mr-1 truncate max-w-[200px] sm:max-w-xs">{activeGymName}</h1>
             {selectedGyms.length > 1 && <ChevronDown size={20} className={`transition-transform ${showGymSelector ? 'rotate-180' : ''}`} />}
           </button>
 
           {/* Gym Selection Dropdown */}
           {showGymSelector && selectedGyms.length > 1 && (
-            <div className="absolute top-full left-0 mt-2 w-60 bg-white rounded-md shadow-lg border z-20">
+            <div className="absolute top-full left-0 mt-2 w-60 bg-white rounded-md shadow-lg border z-20 max-h-60 overflow-y-auto">
               {selectedGyms.map(gymId => (
                 <button
                   key={gymId}
                   onClick={() => handleGymSelect(gymId)}
-                  className={`block w-full text-left px-4 py-2 text-sm ${activeGymId === gymId ? 'bg-accent-blue/10 text-accent-blue font-semibold' : 'text-brand-gray hover:bg-gray-100'}`}
+                  className={`block w-full text-left px-4 py-2 text-sm truncate ${activeGymId === gymId ? 'bg-accent-blue/10 text-accent-blue font-semibold' : 'text-brand-gray hover:bg-gray-100'}`}
                 >
-                  {getGymNameById(gymId)}
+                  {getGymNameById(gymId)} {/* Use function to get name */}
                 </button>
               ))}
             </div>

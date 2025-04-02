@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import WelcomeScreen from './components/onboarding/WelcomeScreen';
 import AuthScreen from './components/onboarding/AuthScreen';
 import GymSelectionScreen from './components/onboarding/GymSelectionScreen';
@@ -10,11 +10,11 @@ import LogClimbScreen from './components/log/LogClimbScreen';
 import ProfileScreen from './components/profile/ProfileScreen';
 import DiscoverScreen from './components/discover/DiscoverScreen';
 import BottomNavBar from './components/dashboard/BottomNavBar';
-import { AppView, RouteData } from './types';
-import { supabase } from './supabaseClient'; // Import supabase
-import type { User } from '@supabase/supabase-js'; // Import User type
+import { AppView, RouteData, UserMetadata, GymData } from './types'; // Import UserMetadata, GymData
+import { supabase } from './supabaseClient';
+import type { User } from '@supabase/supabase-js';
 
-// --- Placeholder Data --- (Keep existing data)
+// --- Placeholder Data --- (Keep existing data for now)
 const placeholderRoutes: RouteData[] = [
   { id: 'r1', name: 'Crimson Dyno', grade: 'V5', gradeColor: 'accent-red', location: 'Overhang Cave', setter: 'Admin', dateSet: '2024-03-10', status: 'sent', betaAvailable: true, description: 'Explosive move off the starting holds to a big jug.', imageUrl: 'https://images.unsplash.com/photo-1564769662533-4f00a87b4056?q=80&w=1974&auto=format&fit=crop&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D' },
   { id: 'r2', name: 'Blue Traverse', grade: 'V3', gradeColor: 'accent-blue', location: 'Slab Wall', setter: 'Admin', dateSet: '2024-03-08', status: 'attempted', betaAvailable: false, description: 'Technical footwork required on small holds.' },
@@ -24,70 +24,156 @@ const placeholderRoutes: RouteData[] = [
   { id: 'r6', name: 'The Gray Crack', grade: 'V1', gradeColor: 'brand-gray', location: 'Training Area', setter: 'Admin', dateSet: '2024-02-25', status: 'attempted', betaAvailable: false },
 ];
 const getRouteById = (id: string | null): RouteData | undefined => placeholderRoutes.find(route => route.id === id);
-const getGymNameById = (id: string): string => { const gyms: { [key: string]: string } = { gym1: 'Summit Climbing', gym2: 'Movement', gym3: 'Brooklyn Boulders', gym4: 'Sender One', gym5: 'The Cliffs', gym6: 'Planet Granite', gym7: 'Austin Bouldering Project', gym8: 'Vertical World' }; return gyms[id] || 'Unknown Gym'; };
-// --- End Placeholder Data ---
 
+// --- Global State ---
 type OnboardingStep = 'welcome' | 'auth' | 'gymSelection' | 'complete';
 
 function App() {
   const [onboardingStep, setOnboardingStep] = useState<OnboardingStep>('welcome');
   const [appView, setAppView] = useState<AppView>('onboarding');
   const [previousAppView, setPreviousAppView] = useState<AppView>('dashboard');
-  const [selectedGyms, setSelectedGyms] = useState<string[]>([]);
+  const [selectedGymIds, setSelectedGymIds] = useState<string[]>([]); // Renamed from selectedGyms
   const [activeGymId, setActiveGymId] = useState<string | null>(null);
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
-  const [isAuthenticated, setIsAuthenticated] = useState(false); // Track auth state
-  const [currentUser, setCurrentUser] = useState<User | null>(null); // Add state for current user
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [userMetadata, setUserMetadata] = useState<UserMetadata | null>(null); // State for user metadata
+  const [gymDataCache, setGymDataCache] = useState<Map<string, GymData>>(new Map()); // Cache for gym details
+  const [isLoadingUser, setIsLoadingUser] = useState(true); // Loading state for initial user fetch
 
-  // Check initial auth state and fetch user data
+  // --- Utility Functions ---
+  const getGymNameById = useCallback((id: string | null): string => {
+    if (!id) return 'Unknown Gym';
+    return gymDataCache.get(id)?.name || 'Loading Gym...';
+  }, [gymDataCache]);
+
+  // Fetch details for a list of gym IDs and update cache
+  const fetchAndCacheGymDetails = useCallback(async (gymIds: string[]) => {
+    if (gymIds.length === 0) return;
+
+    const idsToFetch = gymIds.filter(id => !gymDataCache.has(id));
+    if (idsToFetch.length === 0) return; // All needed gyms are already cached
+
+    console.log("Fetching details for gym IDs:", idsToFetch);
+    const { data, error } = await supabase
+      .from('gyms')
+      .select('id, name, city, state, country')
+      .in('id', idsToFetch);
+
+    if (error) {
+      console.error('Error fetching gym details:', error);
+    } else if (data) {
+      setGymDataCache(prevCache => {
+        const newCache = new Map(prevCache);
+        data.forEach(gym => newCache.set(gym.id, gym));
+        return newCache;
+      });
+    }
+  }, [gymDataCache]); // Dependency on cache
+
+  // --- User Authentication and Data Fetching ---
+  const fetchUserMetadata = useCallback(async (userId: string) => {
+    console.log("Fetching metadata for user:", userId);
+    const { data, error } = await supabase
+      .from('user_metadata')
+      .select('*')
+      .eq('user_id', userId)
+      .single(); // Expect only one row per user
+
+    if (error && error.code !== 'PGRST116') { // Ignore 'PGRST116' (No rows found) error initially
+      console.error('Error fetching user metadata:', error);
+      setUserMetadata(null); // Clear metadata on error
+      return null;
+    } else if (data) {
+      console.log("User metadata fetched:", data);
+      setUserMetadata(data);
+      // Update local state based on fetched metadata
+      setSelectedGymIds(data.selected_gym_ids || []);
+      setActiveGymId(data.current_gym_id || (data.selected_gym_ids?.length > 0 ? data.selected_gym_ids[0] : null));
+      // Fetch details for the gyms found in metadata
+      fetchAndCacheGymDetails([...(data.selected_gym_ids || []), data.current_gym_id].filter(Boolean) as string[]);
+      return data; // Return fetched data
+    } else {
+        console.log("No user metadata found for user:", userId);
+        setUserMetadata(null); // No metadata found
+        return null;
+    }
+  }, [fetchAndCacheGymDetails]); // Dependency on fetchAndCacheGymDetails
+
+  // Effect for handling auth state changes and fetching initial data
   useEffect(() => {
-		//supabase.auth.signOut()
-    console.log("App view:", appView);
-    const fetchUserAndSetState = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      setCurrentUser(user); // Set user data
-      if (user) {
-        setIsAuthenticated(true);
-        // TODO: Fetch user profile/settings (like selected gyms) from your database table if needed
-        // For now, assume onboarding complete if user exists
+    setIsLoadingUser(true); // Start loading
+    console.log("Auth effect running. Current appView:", appView);
+
+    const fetchInitialData = async (user: User) => {
+      setCurrentUser(user);
+      setIsAuthenticated(true);
+      const metadata = await fetchUserMetadata(user.id);
+
+      if (metadata && metadata.selected_gym_ids && metadata.selected_gym_ids.length > 0) {
         setOnboardingStep('complete');
-        setAppView(appView === 'onboarding' ? 'dashboard' : appView); // Go to dashboard if not onboarding
-        console.log("User data fetched:", user);
-        // Example: Fetch selected gyms if stored in user metadata or a profile table
-        // const userSelectedGyms = user.user_metadata?.selected_gyms || [];
-        // setSelectedGyms(userSelectedGyms);
-        // if (userSelectedGyms.length > 0 && !activeGymId) {
-        //   setActiveGymId(userSelectedGyms[0]);
-        // }
+        // Navigate to dashboard only if currently in onboarding or initial load state
+        if (appView === 'onboarding') {
+            setAppView('dashboard');
+        }
       } else {
-        setIsAuthenticated(false);
-        setCurrentUser(null);
-        setAppView('onboarding');
-        setOnboardingStep('welcome');
+        // User exists but hasn't completed gym selection
+        setOnboardingStep('gymSelection');
+        setAppView('onboarding'); // Stay in onboarding flow
       }
+      setIsLoadingUser(false); // Finish loading
     };
 
-    fetchUserAndSetState(); // Check on initial load
+    const handleLogoutCleanup = () => {
+      console.log("Cleaning up on logout");
+      setIsAuthenticated(false);
+      setCurrentUser(null);
+      setUserMetadata(null);
+      setSelectedGymIds([]);
+      setActiveGymId(null);
+      setSelectedRouteId(null);
+      setAppView('onboarding');
+      setOnboardingStep('auth'); // Go to auth screen after logout
+      setPreviousAppView('dashboard');
+      setIsLoadingUser(false); // Finish loading
+    };
+
+    // Check initial session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        console.log("Initial session found for user:", session.user.id);
+        fetchInitialData(session.user);
+      } else {
+        console.log("No initial session found.");
+        handleLogoutCleanup(); // Ensure clean state if no session
+      }
+    });
 
     // Listen for auth changes
     const { data: authListener } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      console.log("Auth state changed:", _event, "User:", session?.user?.id);
       const user = session?.user ?? null;
-      setCurrentUser(user); // Update user state on change
-      setIsAuthenticated(!!user);
 
-      if (!user) {
-        // If user logs out, reset state and go to auth screen
-        handleLogoutCleanup();
+      if (user) {
+        // User logged in or session refreshed
+        // Avoid redundant fetches if user hasn't changed
+        if (user.id !== currentUser?.id) {
+            setIsLoadingUser(true); // Start loading for new user data
+            await fetchInitialData(user);
+        } else {
+            // User is the same, maybe just a token refresh, ensure state is consistent
+            setIsAuthenticated(true);
+            // Optionally re-fetch metadata if needed, or trust existing state
+            // await fetchUserMetadata(user.id); // Uncomment if refresh needed
+            setIsLoadingUser(false); // Finish loading if no fetch needed
+        }
       } else {
-         // If user logs in or session is refreshed, ensure onboarding status is correct
-         // This might involve checking if they've selected gyms previously
-         // For now, if user exists, assume onboarding is complete
-         setOnboardingStep('complete');
-         // Avoid navigating if already in an app view (prevents jumping from profile to dashboard on refresh)
-        console.log("ici", appView)
-        if (appView === 'onboarding') {
-            setAppView('dashboard');
-         }
+        // User logged out
+        if (isAuthenticated) { // Only cleanup if state was previously authenticated
+            handleLogoutCleanup();
+        } else {
+            setIsLoadingUser(false); // Ensure loading stops if already logged out
+        }
       }
     });
 
@@ -95,201 +181,201 @@ function App() {
     return () => {
       authListener?.subscription.unsubscribe();
     };
-  }, [appView]); // Re-run if appView changes to handle navigation after login/logout
+    // Dependencies: fetchUserMetadata, appView, currentUser?.id, isAuthenticated
+  }, [fetchUserMetadata, appView, currentUser?.id, isAuthenticated]);
 
 
+  // Update previous view state
   useEffect(() => {
-    // Update previous view only if the new view is not 'log'
     setPreviousAppView(currentView => (appView !== 'log' ? appView : currentView));
   }, [appView]);
 
-  const handleNextOnboarding = () => {
-    switch (onboardingStep) {
-      case 'welcome':
-        setOnboardingStep('auth');
-        break;
-      case 'auth':
-        // Auth success is handled by onAuthStateChange listener
-        break;
-      case 'gymSelection':
-        if (selectedGyms.length > 0) {
-          const firstGym = selectedGyms[0];
-          setActiveGymId(firstGym);
-          setOnboardingStep('complete');
-          setAppView('dashboard');
-          // TODO: Persist selected gyms for the user (e.g., updateUserMetadata or profile table)
-          // supabase.auth.updateUser({ data: { selected_gyms: selectedGyms } })
-        } else {
-          alert("Please select at least one gym.");
-        }
-        break;
-      default:
-        break;
-    }
-  };
-
-  // Called from AuthScreen on successful login/signup
-  const handleAuthSuccess = () => {
-    // Auth state change is handled by the listener now, which fetches the user
-    // Determine next step based on user data (e.g., check if gyms are selected)
-    // For now, assume gym selection is needed after initial signup/login if no gyms are set
-    // A better approach: check user profile/metadata after auth listener confirms user
-    setOnboardingStep('gymSelection'); // Go to gym selection after auth
-    setAppView('onboarding');
-  };
-
-  const handleGymSelection = (gyms: string[]) => {
-    setSelectedGyms(gyms);
-    if (gyms.length > 0 && !activeGymId) {
-        setActiveGymId(gyms[0]);
-    }
-  };
+  // --- Navigation and Action Handlers ---
 
   const handleNavigate = (view: AppView, routeId?: string) => {
     console.log("Navigating to:", view, routeId);
     if ((view === 'routeDetail' || view === 'addBeta') && routeId) {
       setSelectedRouteId(routeId);
     } else if (view !== 'routeDetail' && view !== 'addBeta') {
-      setSelectedRouteId(null); // Clear route ID when navigating away
+      setSelectedRouteId(null);
     }
     setAppView(view);
   };
 
-  const handleSwitchGym = (gymId: string) => {
-    setActiveGymId(gymId);
-    setAppView('dashboard'); // Go to dashboard after switching gym
-    setSelectedRouteId(null);
-    console.log("Switched active gym to:", gymId);
+  // Persist gym selection to user_metadata
+  const persistGymSelection = async (userId: string, gymsToSave: string[], currentGym: string | null) => {
+    console.log("Persisting gym selection:", gymsToSave, "Current:", currentGym);
+    const { error } = await supabase
+      .from('user_metadata')
+      .update({
+        selected_gym_ids: gymsToSave,
+        current_gym_id: currentGym ?? (gymsToSave.length > 0 ? gymsToSave[0] : null) // Set current_gym_id
+      })
+      .eq('user_id', userId);
+
+    if (error) {
+      console.error('Error saving selected gyms:', error);
+      // TODO: Show error to user?
+    } else {
+      console.log("Gym selection saved successfully.");
+      // Refetch metadata to ensure UI consistency (optional, depends on flow)
+      // fetchUserMetadata(userId);
+    }
+  };
+
+  // Called when user confirms gym selection
+  const handleGymSelectionComplete = () => {
+    if (selectedGymIds.length > 0 && currentUser) {
+      const firstGym = selectedGymIds[0];
+      const currentGymToSet = activeGymId || firstGym; // Use existing active or default to first selected
+      setActiveGymId(currentGymToSet); // Update local state immediately
+      setOnboardingStep('complete');
+      setAppView('dashboard');
+      persistGymSelection(currentUser.id, selectedGymIds, currentGymToSet); // Save to DB
+    } else {
+      alert("Please select at least one gym.");
+    }
+  };
+
+  // Called from GymSelectionScreen whenever selection changes
+  const handleGymSelectionChange = (gymIds: string[]) => {
+    setSelectedGymIds(gymIds);
+    // Fetch details for newly selected gyms if not already cached
+    fetchAndCacheGymDetails(gymIds);
+    // Optionally update activeGymId if the current one is removed
+    if (activeGymId && !gymIds.includes(activeGymId)) {
+        setActiveGymId(gymIds.length > 0 ? gymIds[0] : null);
+    } else if (!activeGymId && gymIds.length > 0) {
+        setActiveGymId(gymIds[0]); // Set first selected as active if none was set
+    }
+  };
+
+  // Called from AuthScreen on successful login/signup
+  const handleAuthSuccess = () => {
+    // Auth state change listener (in useEffect) handles fetching user data
+    // and determining the next step (usually gym selection if metadata is missing/empty)
+    console.log("Auth successful, listener will handle next steps.");
+    // No direct navigation here, let the useEffect handle it based on fetched data
+  };
+
+  // Persist gym switch to user_metadata
+  const handleSwitchGym = async (gymId: string) => {
+    if (currentUser && gymId !== activeGymId) {
+      setActiveGymId(gymId); // Update local state immediately
+      setAppView('dashboard');
+      setSelectedRouteId(null);
+      console.log("Switched active gym to:", gymId);
+
+      const { error } = await supabase
+        .from('user_metadata')
+        .update({ current_gym_id: gymId })
+        .eq('user_id', currentUser.id);
+
+      if (error) {
+        console.error('Error updating current gym:', error);
+        // Optionally revert local state or show error
+      } else {
+        console.log("Current gym updated successfully in DB.");
+        // Update local metadata state as well
+        setUserMetadata(prev => prev ? { ...prev, current_gym_id: gymId } : null);
+      }
+    }
   };
 
   const handleBack = () => {
-    if (appView === 'routeDetail' || appView === 'addBeta') {
-      setAppView('routes');
-    } else if (appView === 'routes') {
-      setAppView('dashboard');
-    } else if (appView === 'log') {
-      setAppView(previousAppView); // Go back to the view before logging
-    } else if (appView === 'profile' || appView === 'discover') {
-        setAppView('dashboard'); // Default back to dashboard from profile/discover
-    }
-    // Add more specific back logic if needed
+    if (appView === 'routeDetail' || appView === 'addBeta') { setAppView('routes'); }
+    else if (appView === 'routes') { setAppView('dashboard'); }
+    else if (appView === 'log') { setAppView(previousAppView); }
+    else if (appView === 'profile' || appView === 'discover') { setAppView('dashboard'); }
   };
 
   const handleBetaSubmitted = () => {
-    if (selectedRouteId) {
-      setAppView('routeDetail');
-    } else {
-      setAppView('routes');
-    }
+    if (selectedRouteId) { setAppView('routeDetail'); }
+    else { setAppView('routes'); }
   };
 
   const handleLogSubmitted = () => {
     console.log("Log submitted, returning to:", previousAppView);
-    setAppView(previousAppView); // Return to the screen the user was on before logging
+    setAppView(previousAppView);
   };
 
-  // Function to reset state on logout
-  const handleLogoutCleanup = () => {
-    setIsAuthenticated(false);
-    setCurrentUser(null); // Clear user data
-    setSelectedGyms([]);
-    setActiveGymId(null);
-    setSelectedRouteId(null);
-    setAppView('onboarding');
-    setOnboardingStep('auth'); // Go directly to auth screen after logout
-    setPreviousAppView('dashboard'); // Reset previous view
-  };
-
-  // Passed to ProfileScreen
   const handleLogout = async () => {
     const { error } = await supabase.auth.signOut();
     if (error) {
       console.error('Error logging out:', error);
     } else {
-      // State cleanup is handled by the onAuthStateChange listener calling handleLogoutCleanup
-      console.log('Logout successful');
+      console.log('Logout successful, auth listener will handle cleanup.');
     }
   };
 
+  // --- Rendering Logic ---
 
   const renderOnboarding = () => {
      switch (onboardingStep) {
-       case 'welcome': return <WelcomeScreen onNext={handleNextOnboarding} />;
+       case 'welcome': return <WelcomeScreen onNext={() => setOnboardingStep('auth')} />;
        case 'auth': return <AuthScreen onAuthSuccess={handleAuthSuccess} />;
-       case 'gymSelection': return <GymSelectionScreen onGymsSelected={handleGymSelection} onNext={handleNextOnboarding} />;
-       default: return null;
+       // Pass handleGymSelectionChange for live updates and handleGymSelectionComplete for final confirmation
+       case 'gymSelection': return <GymSelectionScreen onGymsSelected={handleGymSelectionChange} onNext={handleGymSelectionComplete} />;
+       default: return null; // Should not happen if logic is correct
      }
    };
 
   const renderApp = () => {
-    // If authenticated but onboarding isn't marked complete (e.g., no gyms selected yet)
-    if (isAuthenticated && onboardingStep !== 'complete') {
-        // Check if gym selection is needed (e.g., based on fetched user data or selectedGyms state)
-        // This logic might need refinement based on how gym selection persistence is implemented
-        if (onboardingStep === 'gymSelection' || selectedGyms.length === 0) {
-             return <GymSelectionScreen onGymsSelected={handleGymSelection} onNext={handleNextOnboarding} />;
+    // --- Loading State ---
+    if (isLoadingUser) {
+        // TODO: Replace with a proper loading spinner component
+        return <div className="min-h-screen flex items-center justify-center">Loading...</div>;
+    }
+
+    // --- Onboarding Flow ---
+    if (appView === 'onboarding') {
+        return renderOnboarding();
+    }
+
+    // --- Authenticated App Flow ---
+    if (isAuthenticated && currentUser && onboardingStep === 'complete') {
+        const activeGymName = getGymNameById(activeGymId);
+        const selectedRouteData = getRouteById(selectedRouteId);
+
+        const showNavBar = ['dashboard', 'routes', 'log', 'discover', 'profile'].includes(appView);
+        const navBar = showNavBar ? <BottomNavBar currentView={appView} onNavigate={handleNavigate} /> : null;
+
+        let currentScreen;
+        switch (appView) {
+          case 'dashboard':
+            currentScreen = <DashboardScreen selectedGyms={selectedGymIds} activeGymId={activeGymId} onSwitchGym={handleSwitchGym} getGymNameById={getGymNameById} />; // Pass getGymNameById
+            break;
+          case 'routes':
+            currentScreen = <RoutesScreen activeGymId={activeGymId} activeGymName={activeGymName} onNavigate={handleNavigate} />;
+            break;
+          case 'routeDetail':
+            if (selectedRouteData) {
+              currentScreen = <RouteDetailScreen route={selectedRouteData} onBack={handleBack} onNavigate={handleNavigate} />;
+            } else {
+              currentScreen = <div className="p-4 pt-16 text-center text-red-500">Error: Route not found. <button onClick={handleBack} className="underline">Go Back</button></div>;
+            }
+            break;
+          case 'addBeta':
+             if (selectedRouteData) {
+               currentScreen = <AddBetaScreen route={selectedRouteData} onBack={handleBack} onSubmitSuccess={handleBetaSubmitted} />;
+             } else {
+               currentScreen = <div className="p-4 pt-16 text-center text-red-500">Error: Route context lost. <button onClick={handleBack} className="underline">Go Back</button></div>;
+             }
+             break;
+          case 'log':
+             currentScreen = <LogClimbScreen availableRoutes={placeholderRoutes} onBack={handleBack} onSubmitSuccess={handleLogSubmitted} />;
+             break;
+          case 'discover':
+             currentScreen = <DiscoverScreen />;
+             break;
+          case 'profile':
+             // Pass currentUser and handleLogout to ProfileScreen
+             currentScreen = <ProfileScreen currentUser={currentUser} userMetadata={userMetadata} onNavigate={handleNavigate} onLogout={handleLogout} getGymNameById={getGymNameById} />; // Pass metadata and gym name getter
+             break;
+          default: // Fallback to dashboard if authenticated and view is unknown
+            currentScreen = <DashboardScreen selectedGyms={selectedGymIds} activeGymId={activeGymId} onSwitchGym={handleSwitchGym} getGymNameById={getGymNameById} />;
         }
-    }
 
-    // --- Main App Rendering ---
-    const activeGymName = activeGymId ? getGymNameById(activeGymId) : 'Select Gym';
-    const selectedRouteData = getRouteById(selectedRouteId);
-
-    const showNavBar = isAuthenticated && onboardingStep === 'complete' && ['dashboard', 'routes', 'log', 'discover', 'profile'].includes(appView);
-    const navBar = showNavBar ? <BottomNavBar currentView={appView} onNavigate={handleNavigate} /> : null;
-
-    let currentScreen;
-    switch (appView) {
-      case 'dashboard':
-        currentScreen = <DashboardScreen selectedGyms={selectedGyms} activeGymId={activeGymId} onSwitchGym={handleSwitchGym} />;
-        break;
-      case 'routes':
-        currentScreen = <RoutesScreen activeGymId={activeGymId} activeGymName={activeGymName} onNavigate={handleNavigate} />;
-        break;
-      case 'routeDetail':
-        if (selectedRouteData) {
-          currentScreen = <RouteDetailScreen route={selectedRouteData} onBack={handleBack} onNavigate={handleNavigate} />;
-        } else {
-          currentScreen = <div className="p-4 pt-16 text-center text-red-500">Error: Route not found. <button onClick={handleBack} className="underline">Go Back</button></div>;
-        }
-        break;
-      case 'addBeta':
-         if (selectedRouteData) {
-           currentScreen = <AddBetaScreen route={selectedRouteData} onBack={handleBack} onSubmitSuccess={handleBetaSubmitted} />;
-         } else {
-           currentScreen = <div className="p-4 pt-16 text-center text-red-500">Error: Route context lost. <button onClick={handleBack} className="underline">Go Back</button></div>;
-         }
-         break;
-      case 'log':
-         currentScreen = <LogClimbScreen availableRoutes={placeholderRoutes} onBack={handleBack} onSubmitSuccess={handleLogSubmitted} />;
-         break;
-      case 'discover':
-         currentScreen = <DiscoverScreen />;
-         break;
-      case 'profile':
-         // Pass currentUser and handleLogout to ProfileScreen
-         currentScreen = <ProfileScreen currentUser={currentUser} onNavigate={handleNavigate} onLogout={handleLogout} />;
-         break;
-      default:
-        currentScreen = (isAuthenticated && onboardingStep === 'complete')
-            ? <DashboardScreen selectedGyms={selectedGyms} activeGymId={activeGymId} onSwitchGym={handleSwitchGym} />
-            : null;
-    }
-
-    // Handle loading/initial state before auth check completes
-    if (!isAuthenticated && appView === 'onboarding' && onboardingStep === 'welcome') {
-        return renderOnboarding(); // Show welcome screen initially
-    }
-    // If not authenticated (and not on welcome), show AuthScreen
-     if (!isAuthenticated && appView !== 'onboarding') {
-        return <AuthScreen onAuthSuccess={handleAuthSuccess} />;
-     }
-     // If authenticated but onboarding is not complete, render the appropriate onboarding step
-     if (isAuthenticated && onboardingStep !== 'complete') {
-         return renderOnboarding();
-     }
-     // If authenticated and onboarding is complete, render the main app view
-     if (isAuthenticated && onboardingStep === 'complete' && currentUser) { // Ensure currentUser is loaded
         return (
           <div className="font-sans">
             <div className={showNavBar ? "pb-16" : ""}>
@@ -298,12 +384,16 @@ function App() {
             {navBar}
           </div>
         );
-     }
+    }
 
-     // Fallback/Loading state (optional)
-     // return <div>Loading...</div>; // Or a spinner component
-     // Render onboarding as default fallback if other conditions fail
-     return renderOnboarding();
+    // --- Fallback (Should ideally be handled by loading or onboarding) ---
+    // If not loading, not authenticated, and not in onboarding, show Auth screen.
+    if (!isAuthenticated && !isLoadingUser) {
+        return <AuthScreen onAuthSuccess={handleAuthSuccess} />;
+    }
+
+    // Default fallback (e.g., if something unexpected happens)
+    return <WelcomeScreen onNext={() => setOnboardingStep('auth')} />;
   }
 
   return renderApp();
