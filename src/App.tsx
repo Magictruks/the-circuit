@@ -25,8 +25,6 @@ const placeholderRoutes: RouteData[] = [
   { id: 'r5', gym_id: 'g1', name: 'Purple Pain', grade: 'V6', grade_color: 'accent-purple', location: 'Overhang Cave', setter: 'Mike R.', date_set: '2024-02-28', status: 'unseen', betaAvailable: true },
   { id: 'r6', gym_id: 'g1', name: 'The Gray Crack', grade: 'V1', grade_color: 'brand-gray', location: 'Training Area', setter: 'Admin', date_set: '2024-02-25', status: 'attempted', betaAvailable: false },
 ];
-// Remove getRouteById - we will fetch directly
-// const getRouteById = (id: string | null): RouteData | undefined => placeholderRoutes.find(route => route.id === id);
 
 // --- Global State ---
 type OnboardingStep = 'welcome' | 'auth' | 'gymSelection' | 'complete';
@@ -39,7 +37,7 @@ function App() {
   const [activeGymId, setActiveGymId] = useState<string | null>(null);
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [currentUser, setCurrentUser] = useState<User | null>(null); // Keep track of the full User object
   const [userMetadata, setUserMetadata] = useState<UserMetadata | null>(null);
   const [gymDetails, setGymDetails] = useState<Map<string, GymData>>(new Map());
   const [isLoadingAuth, setIsLoadingAuth] = useState(true);
@@ -94,9 +92,8 @@ function App() {
         setIsLoadingGymDetails(false);
       }
     };
-    // Fetch only when activeGymId changes (or selectedGymIds, but active is primary trigger)
     fetchGymDetails();
-  }, [activeGymId, selectedGymIds]); // Depend on selectedGymIds as well
+  }, [activeGymId, selectedGymIds]);
 
 
   // --- User Data Fetching ---
@@ -121,7 +118,7 @@ function App() {
         const fetchedCurrentGym = data.current_gym_id || null;
         setSelectedGymIds(fetchedGymIds);
         const newActiveGym = fetchedCurrentGym || (fetchedGymIds.length > 0 ? fetchedGymIds[0] : null);
-        setActiveGymId(newActiveGym); // Set active gym based on fetched data
+        setActiveGymId(newActiveGym);
         if (fetchedGymIds.length > 0) {
           setOnboardingStep('complete');
           setAppView(prev => prev === 'onboarding' ? 'dashboard' : prev);
@@ -154,7 +151,6 @@ function App() {
       setSelectedGymIds([]); setActiveGymId(null); setSelectedRouteId(null);
       setGymDetails(new Map()); setAppView('onboarding'); setOnboardingStep('auth');
       setPreviousAppView('dashboard'); setIsLoadingData(false); setIsLoadingGymDetails(false);
-      // Clear route detail state on logout
       setSelectedRouteData(undefined); setIsLoadingRouteDetail(false); setRouteDetailError(null);
     };
 
@@ -180,8 +176,7 @@ function App() {
         if (!session?.user) {
           handleLogoutCleanup();
         } else {
-          setIsLoadingData(true); // Trigger user metadata fetch for new user
-          // Clear route detail state when user changes
+          setIsLoadingData(true);
           setSelectedRouteData(undefined); setIsLoadingRouteDetail(false); setRouteDetailError(null);
         }
       }
@@ -210,51 +205,28 @@ function App() {
   useEffect(() => {
     const fetchRouteDetails = async () => {
       if (!selectedRouteId) {
-        setSelectedRouteData(undefined); // Clear data if no ID
-        setIsLoadingRouteDetail(false);
-        setRouteDetailError(null);
+        setSelectedRouteData(undefined); setIsLoadingRouteDetail(false); setRouteDetailError(null);
         return;
       }
 
-      console.log(`[Route Detail Effect] Fetching details for route ID: ${selectedRouteId}`);
-      setIsLoadingRouteDetail(true);
-      setRouteDetailError(null);
-      setSelectedRouteData(undefined); // Clear previous data while loading
+      setIsLoadingRouteDetail(true); setRouteDetailError(null); setSelectedRouteData(undefined);
 
       try {
         const { data, error } = await supabase
           .from('routes')
-          .select('*') // Select all columns
-          .eq('id', selectedRouteId) // Filter by the selected route ID
-          .single(); // Expect only one result
+          .select('*')
+          .eq('id', selectedRouteId)
+          .single();
 
         if (error) {
           console.error('[Route Detail Effect] Error fetching route details:', error);
-          if (error.code === 'PGRST116') { // Not found code
-            setRouteDetailError('Route not found.');
-          } else {
-            setRouteDetailError(`Failed to load route details: ${error.message}`);
-          }
-          setSelectedRouteData(null); // Indicate error/not found
+          setRouteDetailError(error.code === 'PGRST116' ? 'Route not found.' : `Failed to load route details: ${error.message}`);
+          setSelectedRouteData(null);
         } else if (data) {
-          console.log('[Route Detail Effect] Route details fetched successfully:', data);
-          // Map data if needed (e.g., snake_case to camelCase)
-          // Supabase client might handle this, but explicit mapping is safer
-          const mappedData: RouteData = {
-            ...data,
-            // Ensure field names match RouteData type if necessary
-            // gradeColor: data.grade_color,
-            // dateSet: data.date_set,
-            // imageUrl: data.image_url,
-            // Add placeholder status/beta for UI compatibility until implemented
-            status: 'unseen', // Placeholder
-            betaAvailable: Math.random() > 0.5, // Placeholder
-          };
+          const mappedData: RouteData = { ...data }; // Assuming direct mapping works for now
           setSelectedRouteData(mappedData);
         } else {
-          // Should be covered by error handling, but as a fallback
-          setRouteDetailError('Route not found.');
-          setSelectedRouteData(null);
+          setRouteDetailError('Route not found.'); setSelectedRouteData(null);
         }
       } catch (err) {
         console.error("[Route Detail Effect] Unexpected error fetching route details:", err);
@@ -265,17 +237,13 @@ function App() {
       }
     };
 
-    // Only fetch when the view is 'routeDetail' or 'addBeta' and an ID is selected
     if ((appView === 'routeDetail' || appView === 'addBeta') && selectedRouteId) {
         fetchRouteDetails();
     } else {
-        // Clear details if navigating away or no ID selected
-        setSelectedRouteData(undefined);
-        setIsLoadingRouteDetail(false);
-        setRouteDetailError(null);
+        setSelectedRouteData(undefined); setIsLoadingRouteDetail(false); setRouteDetailError(null);
     }
 
-  }, [selectedRouteId, appView]); // Re-run when selectedRouteId or appView changes
+  }, [selectedRouteId, appView]);
 
 
   // Update previous view state
@@ -287,12 +255,9 @@ function App() {
   // --- Navigation and Action Handlers ---
 
   const handleNavigate = (view: AppView, routeId?: string) => {
-    console.log("Navigating to:", view, "Route ID:", routeId);
-    // Set route ID *before* changing view to trigger fetch effect
     if ((view === 'routeDetail' || view === 'addBeta') && routeId) {
       setSelectedRouteId(routeId);
     } else if (view !== 'routeDetail' && view !== 'addBeta') {
-      // Clear route ID if navigating away from detail/addBeta views
       setSelectedRouteId(null);
     }
     setAppView(view);
@@ -312,7 +277,7 @@ function App() {
       if (error) {
         console.error('Error saving selected gyms (upsert):', error);
         alert(`Error saving gym selection: ${error.message}`);
-        await fetchUserMetadata(userId); // Revert state on error
+        await fetchUserMetadata(userId);
       } else {
         setSelectedGymIds(gymsToSave); setActiveGymId(currentGym);
         setUserMetadata(prev => prev ? { ...prev, selected_gym_ids: gymsToSave, current_gym_id: currentGym } : {
@@ -370,7 +335,7 @@ function App() {
   };
 
   const handleBack = () => {
-    if (appView === 'routeDetail' || appView === 'addBeta') { setAppView('routes'); setSelectedRouteId(null); } // Clear ID on back
+    if (appView === 'routeDetail' || appView === 'addBeta') { setAppView('routes'); setSelectedRouteId(null); }
     else if (appView === 'routes') { setAppView('dashboard'); }
     else if (appView === 'log') { setAppView(previousAppView); }
     else if (appView === 'profile' || appView === 'discover') { setAppView('dashboard'); }
@@ -380,12 +345,7 @@ function App() {
     }
   };
 
-  const handleBetaSubmitted = () => {
-    // Stay on route detail after submitting beta
-    setAppView('routeDetail');
-    // Optionally trigger a refresh of beta data here
-  };
-
+  const handleBetaSubmitted = () => { setAppView('routeDetail'); };
   const handleLogSubmitted = () => { setAppView(previousAppView); };
 
   const handleLogout = async () => {
@@ -394,7 +354,6 @@ function App() {
     if (error) {
       alert(`Logout failed: ${error.message}`); setIsLoadingAuth(false);
     }
-    // Cleanup handled by listener
   };
 
 
@@ -410,13 +369,11 @@ function App() {
   };
 
   const renderApp = () => {
-    // --- Loading State ---
     const showLoading = isLoadingAuth || (isAuthenticated && (isLoadingData || isLoadingGymDetails));
     if (showLoading) {
       return <div className="min-h-screen flex items-center justify-center text-brand-gray"><Loader2 className="animate-spin mr-2" />Loading App...</div>;
     }
 
-    // --- Onboarding Flow ---
     if (!isAuthenticated || (isAuthenticated && onboardingStep !== 'complete') || appView === 'onboarding') {
       if (isAuthenticated && onboardingStep !== 'complete' && appView !== 'onboarding') {
         setAppView('onboarding');
@@ -425,7 +382,6 @@ function App() {
       return renderOnboarding();
     }
 
-    // --- Authenticated App Flow ---
     if (isAuthenticated && currentUser && onboardingStep === 'complete') {
       if (appView === 'onboarding') {
         setAppView('dashboard');
@@ -445,9 +401,9 @@ function App() {
           currentScreen = <RoutesScreen activeGymId={activeGymId} activeGymName={activeGymName} onNavigate={handleNavigate} />;
           break;
         case 'routeDetail':
-          // Pass fetched data, loading state, and error state to RouteDetailScreen
           currentScreen = <RouteDetailScreen
-              route={selectedRouteData} // Can be RouteData | null | undefined
+              currentUser={currentUser} // Pass current user
+              route={selectedRouteData}
               isLoading={isLoadingRouteDetail}
               error={routeDetailError}
               onBack={handleBack}
@@ -455,7 +411,6 @@ function App() {
           />;
           break;
         case 'addBeta':
-           // Pass fetched data (or handle loading/error if needed for context)
            if (isLoadingRouteDetail) {
                currentScreen = <div className="p-4 pt-16 text-center text-brand-gray"><Loader2 className="animate-spin mr-2" />Loading Route Info...</div>;
            } else if (routeDetailError || !selectedRouteData) {
@@ -486,7 +441,6 @@ function App() {
       );
     }
 
-    // Fallback
     return renderOnboarding();
   }
 
