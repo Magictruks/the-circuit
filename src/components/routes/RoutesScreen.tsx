@@ -8,15 +8,21 @@ interface RoutesScreenProps {
   activeGymId: string | null;
   activeGymName: string;
   onNavigate: (view: AppView, routeId?: string) => void;
+  initialSearchTerm?: string; // Add prop for initial search term
 }
 
-const RoutesScreen: React.FC<RoutesScreenProps> = ({ activeGymId, activeGymName, onNavigate }) => {
-  const [searchTerm, setSearchTerm] = useState('');
+const RoutesScreen: React.FC<RoutesScreenProps> = ({ activeGymId, activeGymName, onNavigate, initialSearchTerm }) => {
+  const [searchTerm, setSearchTerm] = useState(initialSearchTerm || ''); // Initialize with prop
   const [showFilters, setShowFilters] = useState(false);
   const [routes, setRoutes] = useState<RouteData[]>([]); // State for fetched routes
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // TODO: Add state for actual filters (grade, wall, status, sort)
+
+  // Update search term if initialSearchTerm prop changes (e.g., new search from dashboard)
+  useEffect(() => {
+    setSearchTerm(initialSearchTerm || '');
+  }, [initialSearchTerm]);
 
   // Fetch routes when activeGymId changes
   useEffect(() => {
@@ -53,9 +59,17 @@ const RoutesScreen: React.FC<RoutesScreenProps> = ({ activeGymId, activeGymName,
           // Also add placeholder/default values for status/betaAvailable for now.
           const mappedData: RouteData[] = data.map(route => ({
             ...route,
-            gradeColor: route.grade_color, // Map snake_case to camelCase
-            dateSet: route.date_set, // Ensure correct field name
-            imageUrl: route.image_url, // Ensure correct field name
+            // Ensure all necessary fields from RouteData are present
+            gym_id: route.gym_id,
+            name: route.name,
+            grade: route.grade,
+            grade_color: route.grade_color, // Keep original snake_case for consistency if RouteCard handles it
+            location: route.location,
+            setter: route.setter,
+            date_set: route.date_set,
+            description: route.description,
+            image_url: route.image_url,
+            created_at: route.created_at,
             // Add placeholder status/beta for UI compatibility until implemented
             status: 'unseen', // Placeholder
             betaAvailable: Math.random() > 0.5, // Placeholder
@@ -78,12 +92,23 @@ const RoutesScreen: React.FC<RoutesScreenProps> = ({ activeGymId, activeGymName,
 
   // Memoize filtered routes to avoid recalculation on every render
   const filteredRoutes = useMemo(() => {
-    return routes.filter(route =>
-      (route.name?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
-      (route.grade?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
-      (route.location?.toLowerCase() || '').includes(searchTerm.toLowerCase())
-      // TODO: Add more filtering based on filter state
-    );
+    // Start with all fetched routes
+    let currentRoutes = routes;
+
+    // Apply search term filter
+    if (searchTerm) {
+        currentRoutes = currentRoutes.filter(route =>
+            (route.name?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
+            (route.grade?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
+            (route.location?.toLowerCase() || '').includes(searchTerm.toLowerCase())
+        );
+    }
+
+    // TODO: Apply other filters (grade, wall, status) here based on filter state
+
+    // TODO: Apply sorting here based on sort state
+
+    return currentRoutes;
   }, [routes, searchTerm]); // Recalculate only when routes or searchTerm change
 
   // --- Render Logic ---

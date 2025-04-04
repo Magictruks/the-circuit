@@ -43,6 +43,7 @@ function App() {
   const [isLoadingAuth, setIsLoadingAuth] = useState(true);
   const [isLoadingData, setIsLoadingData] = useState(false);
   const [isLoadingGymDetails, setIsLoadingGymDetails] = useState(false);
+  const [initialSearchTerm, setInitialSearchTerm] = useState<string | undefined>(undefined); // State for initial search term
 
   // State for fetched route details
   const [selectedRouteData, setSelectedRouteData] = useState<RouteData | null | undefined>(undefined); // undefined: not fetched, null: error/not found
@@ -152,6 +153,7 @@ function App() {
       setGymDetails(new Map()); setAppView('onboarding'); setOnboardingStep('auth');
       setPreviousAppView('dashboard'); setIsLoadingData(false); setIsLoadingGymDetails(false);
       setSelectedRouteData(undefined); setIsLoadingRouteDetail(false); setRouteDetailError(null);
+      setInitialSearchTerm(undefined); // Clear search term on logout
     };
 
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -178,6 +180,7 @@ function App() {
         } else {
           setIsLoadingData(true);
           setSelectedRouteData(undefined); setIsLoadingRouteDetail(false); setRouteDetailError(null);
+          setInitialSearchTerm(undefined); // Clear search term on login/user change
         }
       }
     });
@@ -254,14 +257,42 @@ function App() {
 
   // --- Navigation and Action Handlers ---
 
-  const handleNavigate = (view: AppView, routeId?: string) => {
-    if ((view === 'routeDetail' || view === 'addBeta') && routeId) {
-      setSelectedRouteId(routeId);
-    } else if (view !== 'routeDetail' && view !== 'addBeta') {
-      setSelectedRouteId(null);
+  const handleNavigate = (view: AppView, data?: string | { routeId?: string; searchTerm?: string }) => {
+    let routeId: string | undefined = undefined;
+    let searchTerm: string | undefined = undefined;
+
+    if (typeof data === 'string') {
+        // If data is a string, assume it's a routeId for relevant views, or search term for 'routes'
+        if ((view === 'routeDetail' || view === 'addBeta')) {
+            routeId = data;
+        } else if (view === 'routes') {
+            searchTerm = data;
+        }
+    } else if (typeof data === 'object' && data !== null) {
+        // If data is an object, extract routeId and searchTerm
+        routeId = data.routeId;
+        searchTerm = data.searchTerm;
     }
+
+    // Set selected route ID if provided
+    if (routeId) {
+        setSelectedRouteId(routeId);
+    } else if (view !== 'routeDetail' && view !== 'addBeta') {
+        // Clear route ID if navigating away from detail/beta views without a new ID
+        setSelectedRouteId(null);
+    }
+
+    // Set initial search term if navigating to routes view
+    if (view === 'routes' && searchTerm !== undefined) {
+        setInitialSearchTerm(searchTerm);
+    } else if (view !== 'routes') {
+        // Clear initial search term when navigating away from routes view
+        setInitialSearchTerm(undefined);
+    }
+
     setAppView(view);
-  };
+};
+
 
   const handleNavigateToGymSelection = () => {
     setActiveGymId(null); setAppView('onboarding'); setOnboardingStep('gymSelection');
@@ -336,7 +367,7 @@ function App() {
 
   const handleBack = () => {
     if (appView === 'routeDetail' || appView === 'addBeta') { setAppView('routes'); setSelectedRouteId(null); }
-    else if (appView === 'routes') { setAppView('dashboard'); }
+    else if (appView === 'routes') { setAppView('dashboard'); setInitialSearchTerm(undefined); } // Clear search term when going back from routes
     else if (appView === 'log') { setAppView(previousAppView); }
     else if (appView === 'profile' || appView === 'discover') { setAppView('dashboard'); }
     else if (appView === 'onboarding' && onboardingStep === 'gymSelection') { setOnboardingStep('auth'); }
@@ -360,6 +391,7 @@ function App() {
     if (error) {
       alert(`Logout failed: ${error.message}`); setIsLoadingAuth(false);
     }
+    // State cleanup happens via onAuthStateChange listener
   };
 
 
@@ -401,10 +433,22 @@ function App() {
       let currentScreen;
       switch (appView) {
         case 'dashboard':
-          currentScreen = <DashboardScreen selectedGyms={selectedGymIds} activeGymId={activeGymId} onSwitchGym={handleSwitchGym} getGymNameById={getGymNameById} onNavigateToGymSelection={handleNavigateToGymSelection} />;
+          currentScreen = <DashboardScreen
+              selectedGyms={selectedGymIds}
+              activeGymId={activeGymId}
+              onSwitchGym={handleSwitchGym}
+              getGymNameById={getGymNameById}
+              onNavigateToGymSelection={handleNavigateToGymSelection}
+              onNavigate={handleNavigate} // Pass handleNavigate
+          />;
           break;
         case 'routes':
-          currentScreen = <RoutesScreen activeGymId={activeGymId} activeGymName={activeGymName} onNavigate={handleNavigate} />;
+          currentScreen = <RoutesScreen
+              activeGymId={activeGymId}
+              activeGymName={activeGymName}
+              onNavigate={handleNavigate}
+              initialSearchTerm={initialSearchTerm} // Pass initial search term
+          />;
           break;
         case 'routeDetail':
           currentScreen = <RouteDetailScreen
@@ -441,7 +485,14 @@ function App() {
           break;
         default:
           setAppView('dashboard');
-          currentScreen = <DashboardScreen selectedGyms={selectedGymIds} activeGymId={activeGymId} onSwitchGym={handleSwitchGym} getGymNameById={getGymNameById} onNavigateToGymSelection={handleNavigateToGymSelection} />;
+          currentScreen = <DashboardScreen
+              selectedGyms={selectedGymIds}
+              activeGymId={activeGymId}
+              onSwitchGym={handleSwitchGym}
+              getGymNameById={getGymNameById}
+              onNavigateToGymSelection={handleNavigateToGymSelection}
+              onNavigate={handleNavigate} // Pass handleNavigate
+          />;
       }
 
       return (

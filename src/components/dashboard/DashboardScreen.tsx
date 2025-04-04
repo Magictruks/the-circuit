@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { ChevronDown, Search, Bell, CheckCircle, Circle, HelpCircle, PlusCircle } from 'lucide-react'; // Added PlusCircle
+import { ChevronDown, Search, Bell, CheckCircle, Circle, HelpCircle, PlusCircle } from 'lucide-react';
+import { AppView } from '../../types'; // Import AppView
 
 interface DashboardScreenProps {
     selectedGyms: string[]; // Now gym IDs
@@ -7,10 +8,19 @@ interface DashboardScreenProps {
     onSwitchGym: (gymId: string) => void;
     getGymNameById: (id: string | null) => string; // Function to get gym name
     onNavigateToGymSelection: () => void; // New prop for navigation
+    onNavigate: (view: AppView, searchTerm?: string) => void; // Add onNavigate prop
 }
 
-const DashboardScreen: React.FC<DashboardScreenProps> = ({ selectedGyms, activeGymId, onSwitchGym, getGymNameById, onNavigateToGymSelection }) => {
+const DashboardScreen: React.FC<DashboardScreenProps> = ({
+    selectedGyms,
+    activeGymId,
+    onSwitchGym,
+    getGymNameById,
+    onNavigateToGymSelection,
+    onNavigate // Destructure onNavigate
+}) => {
     const [showGymSelector, setShowGymSelector] = useState(false);
+    const [searchTerm, setSearchTerm] = useState(''); // State for search input
 
     const handleGymSelect = (gymId: string) => {
         onSwitchGym(gymId);
@@ -20,6 +30,17 @@ const DashboardScreen: React.FC<DashboardScreenProps> = ({ selectedGyms, activeG
     const handleChooseMoreGyms = () => {
         setShowGymSelector(false); // Close selector
         onNavigateToGymSelection(); // Call the navigation function passed from App.tsx
+    };
+
+    const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+        setSearchTerm(event.target.value);
+    };
+
+    const handleSearchSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+        event.preventDefault(); // Prevent default form submission
+        if (searchTerm.trim()) {
+            onNavigate('routes', searchTerm.trim()); // Navigate to routes screen with search term
+        }
     };
 
     const activeGymName = getGymNameById(activeGymId); // Use the passed function
@@ -69,14 +90,18 @@ const DashboardScreen: React.FC<DashboardScreenProps> = ({ selectedGyms, activeG
                     </button>
                 </div>
                 {/* Search Bar - Placed below Gym Selector for focus */}
-                <div className="relative mt-4">
+                <form onSubmit={handleSearchSubmit} className="relative mt-4">
                     <input
                         type="text"
                         placeholder={`Search routes at ${activeGymName}...`}
+                        value={searchTerm}
+                        onChange={handleSearchChange}
                         className="w-full px-4 py-2 pl-10 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent-blue bg-gray-100"
                     />
                     <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
-                </div>
+                    {/* Hidden submit button to allow Enter key submission */}
+                    <button type="submit" className="hidden"></button>
+                </form>
             </header>
 
             {/* Main Content Area */}
