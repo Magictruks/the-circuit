@@ -13,7 +13,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
       currentUser: User | null; // Add currentUser prop
     }
 
-    // Helper type for count results
+    // Helper type for count results from RPC
     type CountResult = { route_id: string; count: number };
 
     const RoutesScreen: React.FC<RoutesScreenProps> = ({
@@ -92,13 +92,13 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
               setUserProgressMap(progressMap);
             }
 
-            // 3. Fetch Beta Counts
+            // 3. Fetch Beta Counts using RPC
             let betaMap = new Map<string, number>();
             if (routeIds.length > 0) {
               // Use rpc call to get counts efficiently
               const { data: betaCountsData, error: betaCountsError } = await supabase.rpc('get_route_beta_counts', { route_ids: routeIds });
 
-              if (betaCountsError) console.error('[RoutesScreen] Error fetching beta counts:', betaCountsError.message); // Log error but continue
+              if (betaCountsError) console.error('[RoutesScreen] Error fetching beta counts via RPC:', betaCountsError.message); // Log error but continue
               else if (betaCountsData) {
                 (betaCountsData as CountResult[]).forEach(item => betaMap.set(item.route_id, item.count));
               }
@@ -106,13 +106,13 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
             }
 
 
-            // 4. Fetch Comment Counts
+            // 4. Fetch Comment Counts using RPC
             let commentMap = new Map<string, number>();
             if (routeIds.length > 0) {
               // Use rpc call to get counts efficiently
               const { data: commentCountsData, error: commentCountsError } = await supabase.rpc('get_route_comment_counts', { route_ids: routeIds });
 
-              if (commentCountsError) console.error('[RoutesScreen] Error fetching comment counts:', commentCountsError.message); // Log error but continue
+              if (commentCountsError) console.error('[RoutesScreen] Error fetching comment counts via RPC:', commentCountsError.message); // Log error but continue
               else if (commentCountsData) {
                 (commentCountsData as CountResult[]).forEach(item => commentMap.set(item.route_id, item.count));
               }

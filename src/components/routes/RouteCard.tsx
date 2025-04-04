@@ -52,12 +52,8 @@ import React from 'react';
           </div>
 
           {/* Status & Info Icons */}
-          <div className={`flex flex-col items-end ${iconSpacing} flex-shrink-0 ml-auto pl-2`}>
-            {/* Row 1: Progress Status */}
-            <div className="h-5"> {/* Reserve space even if no icon */}
-              {status === 'sent' && <CheckCircle size={iconSize} className="text-green-500" title="Sent" />}
-              {status === 'attempted' && <Circle size={iconSize} className="text-orange-400" title="Attempted" />}
-            </div>
+          <div className={`flex flex-row items-end ${iconSpacing} flex-shrink-0 ml-auto pl-2`}>
+
 
             {/* Row 2: Additional Info Icons */}
             <div className={`flex ${iconSpacing} h-5`}> {/* Reserve space */}
@@ -65,6 +61,12 @@ import React from 'react';
               {hasComments && <MessageSquare size={iconSize} className="text-indigo-500" title="Comments Available" />}
               {hasNotes && <FileText size={iconSize} className="text-purple-500" title="You have notes" />}
               {isOnWishlist && <Bookmark size={iconSize} className="text-accent-yellow" fill="currentColor" title="On Wishlist" />}
+            </div>
+
+						{/* Row 1: Progress Status */}
+            <div className="h-5"> {/* Reserve space even if no icon */}
+              {status === 'sent' && <CheckCircle size={iconSize} className="text-green-500" title="Sent" />}
+              {status === 'attempted' && <Circle size={iconSize} className="text-orange-400" title="Attempted" />}
             </div>
           </div>
         </div>
