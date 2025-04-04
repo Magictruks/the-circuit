@@ -77,7 +77,9 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ currentUser, userMetadata
     if (!currentUser) { setLogbookEntries([]); setIsLoadingLogbook(false); setLogbookError(null); return; }
     setIsLoadingLogbook(true); setLogbookError(null);
     try {
-      const { data, error } = await supabase.from('user_route_progress').select(` attempts, sent_at, rating, notes, wishlist, updated_at, route:routes!inner( id, gym_id, name, grade, grade_color, location, date_set ) `).eq('user_id', currentUser.id).or('sent_at.not.is.null,attempts.gt.0').eq('wishlist', false).order('updated_at', { ascending: false });
+      const { data, error } = await supabase.from('user_route_progress').select(` attempts, sent_at, rating, notes, wishlist, updated_at, route:routes!inner( id, gym_id, name, grade, grade_color, location, date_set ) `).eq('user_id', currentUser.id).or('sent_at.not.is.null,attempts.gt.0')
+				//.eq('wishlist', false)
+				.order('updated_at', { ascending: false });
       if (error) { console.error("Error fetching logbook:", error); setLogbookError("Failed to load your climb log."); setLogbookEntries([]); }
       else if (data) { const mappedEntries = data.map(item => ({ ...(item.route as RouteData), user_progress_attempts: item.attempts, user_progress_sent_at: item.sent_at, user_progress_rating: item.rating, user_progress_notes: item.notes, user_progress_wishlist: item.wishlist, user_progress_updated_at: item.updated_at, })); setLogbookEntries(mappedEntries as LogbookEntry[]); }
       else { setLogbookEntries([]); }
