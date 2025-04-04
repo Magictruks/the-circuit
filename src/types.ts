@@ -21,6 +21,7 @@ import type { User } from '@supabase/supabase-js';
       hasComments?: boolean; // Flag if any comments exist for this route
       hasNotes?: boolean; // Flag if the current user has notes for this route
       isOnWishlist?: boolean; // Flag if the route is on the current user's wishlist
+      rating?: number | null; // User's rating for the route - ADDED
     }
 
 
@@ -124,6 +125,7 @@ import type { User } from '@supabase/supabase-js';
       route_name?: string;
       route_grade?: string;
       gym_name?: string;
+      route_grade_color?: string; // ADDED
 
       // Specific fields based on activity_type
       comment_snippet?: string; // for add_comment
@@ -146,6 +148,7 @@ import type { User } from '@supabase/supabase-js';
       user_avatar_url?: string | null; // Already present, ensure consistency
       route_name?: string; // Can override details if joined
       route_grade?: string; // Can override details if joined
+      route_grade_color?: string; // ADDED: Can override details if joined
       gym_name?: string; // Can override details if joined
     }
 
