@@ -37,7 +37,7 @@ export interface UserMetadata {
   current_gym_id: string | null; // UUID of the currently active gym
   created_at: string; // ISO 8601 timestamp
   updated_at: string; // ISO 8601 timestamp
-  // Add other metadata fields as needed (e.g., avatar_url if not using Supabase default)
+  avatar_url?: string | null; // Add avatar URL from profiles table
 }
 
 
@@ -85,6 +85,40 @@ export interface Comment {
   display_name?: string; // User's display name
   avatar_url?: string; // User's avatar URL
 }
+
+// --- Activity Log ---
+export type ActivityType = 'log_send' | 'log_attempt' | 'add_beta' | 'add_comment' | 'add_route';
+
+export interface ActivityLogDetails {
+  // Common optional fields
+  route_name?: string;
+  route_grade?: string;
+  gym_name?: string;
+
+  // Specific fields based on activity_type
+  comment_snippet?: string; // for add_comment
+  beta_type?: BetaType; // for add_beta
+  attempts?: number; // for log_send
+  // Add more as needed
+}
+
+export interface ActivityLogEntry {
+  id: string;
+  user_id: string;
+  gym_id: string | null;
+  route_id: string | null;
+  activity_type: ActivityType;
+  details: ActivityLogDetails | null;
+  created_at: string;
+
+  // Joined data for display
+  user_display_name?: string;
+  user_avatar_url?: string | null;
+  route_name?: string; // Can override details if joined
+  route_grade?: string; // Can override details if joined
+  gym_name?: string; // Can override details if joined
+}
+
 
 // --- App Navigation & State ---
 

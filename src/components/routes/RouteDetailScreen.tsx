@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { ArrowLeft, MapPin, User as SetterIcon, CalendarDays, Star, Bookmark, Video, MessageSquareText, PencilLine, ThumbsUp, ThumbsDown, Send, PlusCircle, Loader2, AlertTriangle, Save } from 'lucide-react';
-import { RouteData, UserProgress, BetaContent, Comment, BetaType, AppView } from '../../types';
+import { RouteData, UserProgress, BetaContent, Comment, BetaType, AppView, ActivityLogDetails } from '../../types'; // Import ActivityLogDetails
 import { supabase } from '../../supabaseClient';
 import type { User } from '@supabase/supabase-js';
 
@@ -43,13 +43,24 @@ const getGradeColorClass = (colorName: string | undefined): string => {
 };
 
 // Helper to get display name (simple version for now)
-const getUserDisplayName = (userId: string, currentUser: User | null): string => {
+const getUserDisplayName = (userId: string, currentUser: User | null, comment?: Comment | BetaContent): string => {
+    // Prefer joined data if available
+    if (comment?.display_name) return comment.display_name;
+    // Fallback to current user's metadata
     if (currentUser && userId === currentUser.id) {
         return currentUser.user_metadata?.display_name || 'You';
     }
-    // TODO: Fetch profile data for other users later
+    // TODO: Fetch profile data for other users later if not joined
     return `User ${userId.substring(0, 6)}...`; // Placeholder
 };
+
+// Helper to get avatar URL
+const getUserAvatarUrl = (commentOrBeta: Comment | BetaContent | null, fallbackUserId?: string): string => {
+    const defaultName = fallbackUserId ? `User ${fallbackUserId.substring(0, 6)}` : 'User';
+    const fallbackUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(commentOrBeta?.display_name || defaultName)}&background=random&color=fff`;
+    return commentOrBeta?.avatar_url || fallbackUrl;
+};
+
 
 const RouteDetailScreen: React.FC<RouteDetailScreenProps> = ({ currentUser, route, isLoading, error, onBack, onNavigate }) => {
   const [progress, setProgress] = useState<UserProgress>(defaultProgress);
@@ -120,14 +131,36 @@ const RouteDetailScreen: React.FC<RouteDetailScreenProps> = ({ currentUser, rout
     if (!route) { setComments([]); return; }
     setIsLoadingComments(true); setCommentsError(null);
     try {
+      // Join with profiles to get display_name and avatar_url
       const { data, error: fetchError } = await supabase
-        .from('route_comments').select('*') // TODO: Join with profiles later
-        .eq('route_id', route.id).order('created_at', { ascending: true });
-      if (fetchError) { setCommentsError('Failed to load comments.'); setComments([]); }
-      else if (data) { setComments(data as Comment[]); } // TODO: Map profile data
-      else { setComments([]); }
-    } catch (err) { setCommentsError("An unexpected error occurred."); setComments([]); }
-    finally { setIsLoadingComments(false); }
+        .from('route_comments')
+        .select(`
+          *,
+          profile:profiles ( display_name )
+        `)
+        .eq('route_id', route.id)
+        .order('created_at', { ascending: true });
+
+      if (fetchError) {
+        setCommentsError('Failed to load comments.');
+        setComments([]);
+      } else if (data) {
+        // Map the joined data
+        const mappedComments = data.map(comment => ({
+          ...comment,
+          display_name: (comment.profile as any)?.display_name || undefined, // Type assertion needed if profile can be null
+          avatar_url: (comment.profile as any)?.avatar_url || undefined,
+        }));
+        setComments(mappedComments as Comment[]); // Assert final type
+      } else {
+        setComments([]);
+      }
+    } catch (err) {
+      setCommentsError("An unexpected error occurred.");
+      setComments([]);
+    } finally {
+      setIsLoadingComments(false);
+    }
   }, [route]);
 
   useEffect(() => {
@@ -141,135 +174,78 @@ const RouteDetailScreen: React.FC<RouteDetailScreenProps> = ({ currentUser, rout
     if (!route) { setBetaItems([]); return; }
     setIsLoadingBeta(true); setBetaError(null);
     try {
+      // Join with profiles
       const { data, error: fetchError } = await supabase
-        .from('route_beta').select('*') // Fetch upvotes count
-        .eq('route_id', route.id).order('created_at', { ascending: false });
+        .from('route_beta')
+        .select(`
+          *,
+          profile:profiles ( display_name )
+        `)
+        .eq('route_id', route.id)
+        .order('created_at', { ascending: false });
 
-      if (fetchError) { setBetaError('Failed to load beta.'); setBetaItems([]); }
-      else if (data) { setBetaItems(data as BetaContent[]); }
-      else { setBetaItems([]); }
-    } catch (err) { setBetaError("An unexpected error occurred while loading beta."); setBetaItems([]); }
-    finally { setIsLoadingBeta(false); }
+      if (fetchError) {
+        setBetaError('Failed to load beta.');
+        setBetaItems([]);
+      } else if (data) {
+        // Map joined data
+        const mappedBeta = data.map(beta => ({
+          ...beta,
+          display_name: (beta.profile as any)?.display_name || undefined,
+          avatar_url: (beta.profile as any)?.avatar_url || undefined,
+        }));
+        setBetaItems(mappedBeta as BetaContent[]); // Assert final type
+      } else {
+        setBetaItems([]);
+      }
+    } catch (err) {
+      setBetaError("An unexpected error occurred while loading beta.");
+      setBetaItems([]);
+    } finally {
+      setIsLoadingBeta(false);
+    }
   }, [route]);
 
   // --- Fetch User Votes ---
    const fetchUserVotes = useCallback(async (currentBetaItems: BetaContent[]) => {
-       if (!currentUser || currentBetaItems.length === 0) {
-           setUserVotes({}); // Clear votes if no user or no beta items
-           return;
-       }
+       if (!currentUser || currentBetaItems.length === 0) { setUserVotes({}); return; }
        const betaIds = currentBetaItems.map(b => b.id);
-       console.log("[fetchUserVotes] Fetching votes for user:", currentUser.id, "beta IDs:", betaIds); // Debug log
        try {
-           const { data, error } = await supabase
-               .from('route_beta_votes')
-               .select('beta_id, vote_value')
-               .eq('user_id', currentUser.id)
-               .in('beta_id', betaIds);
-
-           if (error) {
-               console.error("[fetchUserVotes] Error fetching user votes:", error);
-               setUserVotes({}); // Clear on error
-           } else if (data) {
-               const votesMap: UserVoteStatus = {};
-               data.forEach(vote => {
-                   votesMap[vote.beta_id] = vote.vote_value;
-               });
-               console.log("[fetchUserVotes] User votes fetched:", votesMap); // Debug log
-               setUserVotes(votesMap);
-           } else {
-               console.log("[fetchUserVotes] No votes found for user."); // Debug log
-               setUserVotes({});
-           }
-       } catch (err) {
-           console.error("[fetchUserVotes] Unexpected error fetching user votes:", err);
-           setUserVotes({});
-       }
-   }, [currentUser]); // Dependency on currentUser
+           const { data, error } = await supabase.from('route_beta_votes').select('beta_id, vote_value').eq('user_id', currentUser.id).in('beta_id', betaIds);
+           if (error) { console.error("[fetchUserVotes] Error fetching user votes:", error); setUserVotes({}); }
+           else if (data) { const votesMap: UserVoteStatus = {}; data.forEach(vote => { votesMap[vote.beta_id] = vote.vote_value; }); setUserVotes(votesMap); }
+           else { setUserVotes({}); }
+       } catch (err) { console.error("[fetchUserVotes] Unexpected error fetching user votes:", err); setUserVotes({}); }
+   }, [currentUser]);
 
   // Fetch beta and user votes when route data is available
   useEffect(() => {
-    if (route && !isLoading) {
-        console.log("[RouteDetail Effect] Route loaded, fetching beta..."); // Debug log
-        fetchBeta(); // Fetch beta first
-    } else {
-        console.log("[RouteDetail Effect] Route not ready or loading, clearing beta/votes."); // Debug log
-        setBetaItems([]); setIsLoadingBeta(false); setBetaError(null); setUserVotes({});
-    }
-  }, [route, isLoading, fetchBeta]); // Keep dependencies
+    if (route && !isLoading) { fetchBeta(); }
+    else { setBetaItems([]); setIsLoadingBeta(false); setBetaError(null); setUserVotes({}); }
+  }, [route, isLoading, fetchBeta]);
 
   // Fetch user votes whenever betaItems change (and user exists)
   useEffect(() => {
-      if (betaItems.length > 0 && currentUser) {
-          console.log("[Vote Fetch Effect] Beta items updated, fetching user votes..."); // Debug log
-          fetchUserVotes(betaItems);
-      } else {
-          // console.log("[Vote Fetch Effect] No beta items or no user, clearing votes."); // Debug log (can be noisy)
-          setUserVotes({}); // Clear votes if beta items are cleared or no user
-      }
-  }, [betaItems, currentUser, fetchUserVotes]); // Keep dependencies
+      if (betaItems.length > 0 && currentUser) { fetchUserVotes(betaItems); }
+      else { setUserVotes({}); }
+  }, [betaItems, currentUser, fetchUserVotes]);
 
 
   // --- Handle Beta Vote ---
   const handleVote = async (betaId: string, voteDirection: 1 | -1) => {
-      console.log(`[handleVote] Attempting vote: betaId=${betaId}, direction=${voteDirection}`); // Debug log
-
-      if (!currentUser) {
-          console.warn("[handleVote] User must be logged in to vote.");
-          // Optionally prompt user to log in
-          // alert("Please log in to vote.");
-          return;
-      }
-      console.log("[handleVote] User is logged in:", currentUser.id); // Debug log
-
+      if (!currentUser) return;
       const currentVote = userVotes[betaId];
-      let newVoteValue: number;
-
-      if (currentVote === voteDirection) {
-          newVoteValue = 0; // Clicked same button again: remove vote
-      } else {
-          newVoteValue = voteDirection; // New vote or changing vote
-      }
-      console.log(`[handleVote] Calculated vote: currentVote=${currentVote}, newVoteValue=${newVoteValue}`); // Debug log
-
-      setIsVoting(prev => ({ ...prev, [betaId]: true })); // Set loading state for this specific item
-      console.log(`[handleVote] Set isVoting[${betaId}] = true`); // Debug log
-
+      let newVoteValue: number = (currentVote === voteDirection) ? 0 : voteDirection;
+      setIsVoting(prev => ({ ...prev, [betaId]: true }));
       try {
-          console.log(`[handleVote] Calling RPC 'handle_beta_vote' with beta_id_in=${betaId}, vote_value_in=${newVoteValue}`); // Debug log
-          const { data: newUpvoteCount, error: rpcError } = await supabase.rpc('handle_beta_vote', {
-              beta_id_in: betaId,
-              vote_value_in: newVoteValue
-          });
-
-          if (rpcError) {
-              console.error("[handleVote] Error calling handle_beta_vote RPC:", rpcError);
-              // TODO: Show error to user (e.g., using a toast notification)
-              alert(`Error submitting vote: ${rpcError.message}`);
-          } else {
-              console.log(`[handleVote] RPC success for ${betaId}. New count: ${newUpvoteCount}`); // Debug log
-              // Update local state optimistically
-              setUserVotes(prev => {
-                  const updatedVotes = { ...prev, [betaId]: newVoteValue };
-                  console.log("[handleVote] Updating userVotes state:", updatedVotes); // Debug log
-                  return updatedVotes;
-              });
-              setBetaItems(prevItems => {
-                  const updatedItems = prevItems.map(item =>
-                      item.id === betaId ? { ...item, upvotes: newUpvoteCount ?? item.upvotes } : item
-                  );
-                  console.log("[handleVote] Updating betaItems state:", updatedItems); // Debug log
-                  return updatedItems;
-              });
+          const { data: newUpvoteCount, error: rpcError } = await supabase.rpc('handle_beta_vote', { beta_id_in: betaId, vote_value_in: newVoteValue });
+          if (rpcError) { console.error("[handleVote] Error calling handle_beta_vote RPC:", rpcError); alert(`Error submitting vote: ${rpcError.message}`); }
+          else {
+              setUserVotes(prev => ({ ...prev, [betaId]: newVoteValue }));
+              setBetaItems(prevItems => prevItems.map(item => item.id === betaId ? { ...item, upvotes: newUpvoteCount ?? item.upvotes } : item ));
           }
-      } catch (err) {
-          console.error("[handleVote] Unexpected error handling vote:", err);
-          // TODO: Show error to user
-          alert("An unexpected error occurred while voting.");
-      } finally {
-          setIsVoting(prev => ({ ...prev, [betaId]: false })); // Clear loading state
-          console.log(`[handleVote] Set isVoting[${betaId}] = false`); // Debug log
-      }
+      } catch (err) { console.error("[handleVote] Unexpected error handling vote:", err); alert("An unexpected error occurred while voting."); }
+      finally { setIsVoting(prev => ({ ...prev, [betaId]: false })); }
   };
 
 
@@ -289,13 +265,37 @@ const RouteDetailScreen: React.FC<RouteDetailScreenProps> = ({ currentUser, rout
     setIsPostingComment(true); setCommentsError(null);
     const commentText = newComment.trim();
     try {
-      const { data, error: insertError } = await supabase
+      // Insert the comment
+      const { data: insertedComment, error: insertError } = await supabase
         .from('route_comments').insert({ route_id: route.id, user_id: currentUser.id, comment_text: commentText })
         .select().single();
-      if (insertError) { setCommentsError(`Failed to post comment: ${insertError.message}`); }
-      else if (data) { setNewComment(''); await fetchComments(); } // Refetch after posting
-    } catch (err) { setCommentsError("An unexpected error occurred."); }
-    finally { setIsPostingComment(false); }
+
+      if (insertError) {
+        setCommentsError(`Failed to post comment: ${insertError.message}`);
+      } else if (insertedComment) {
+        // Log activity after successful comment insertion
+        const activityDetails: ActivityLogDetails = {
+          route_name: route.name,
+          route_grade: route.grade,
+          comment_snippet: commentText.substring(0, 50) + (commentText.length > 50 ? '...' : ''), // Add a snippet
+        };
+        const { error: logError } = await supabase.from('activity_log').insert({
+          user_id: currentUser.id,
+          gym_id: route.gym_id,
+          route_id: route.id,
+          activity_type: 'add_comment',
+          details: activityDetails,
+        });
+        if (logError) console.error('Error logging add_comment activity:', logError);
+
+        setNewComment('');
+        await fetchComments(); // Refetch comments to include the new one with profile data
+      }
+    } catch (err) {
+      setCommentsError("An unexpected error occurred.");
+    } finally {
+      setIsPostingComment(false);
+    }
   };
 
 
@@ -366,38 +366,22 @@ const RouteDetailScreen: React.FC<RouteDetailScreenProps> = ({ currentUser, rout
                     const votingThisItem = isVoting[beta.id];
                     return (
                        <div key={beta.id} className="flex gap-3 border-b pb-3 last:border-b-0">
-                          <img src={beta.avatar_url || `https://ui-avatars.com/api/?name=${getUserDisplayName(beta.user_id, currentUser)}&background=random`} alt="User avatar" className="w-8 h-8 rounded-full flex-shrink-0 mt-1"/>
+                          <img src={getUserAvatarUrl(beta, beta.user_id)} alt="User avatar" className="w-8 h-8 rounded-full flex-shrink-0 mt-1"/>
                           <div className="flex-grow">
-                             <p className="text-sm font-medium text-brand-gray">{beta.display_name || getUserDisplayName(beta.user_id, currentUser)}</p>
+                             <p className="text-sm font-medium text-brand-gray">{getUserDisplayName(beta.user_id, currentUser, beta)}</p>
                              {beta.beta_type === 'text' && <p className="text-sm text-gray-700 mt-1">{beta.text_content}</p>}
                              {beta.beta_type === 'video' && beta.content_url && ( <a href={beta.content_url} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline mt-1 block">Watch Video <Video size={14} className="inline ml-1"/></a> )}
                              {beta.beta_type === 'drawing' && beta.content_url && ( <img src={beta.content_url} alt="Drawing beta" className="mt-1 border rounded max-w-full h-auto" /> )}
                              <div className="flex items-center gap-3 text-xs text-gray-500 mt-2">
                                 <span>{new Date(beta.created_at).toLocaleDateString()}</span>
                                 {/* Voting Buttons */}
-                                <button
-                                    onClick={() => handleVote(beta.id, 1)}
-                                    disabled={!currentUser || votingThisItem}
-                                    className={`flex items-center gap-1 hover:text-green-600 disabled:opacity-50 ${userVote === 1 ? 'text-green-600 font-semibold' : 'text-gray-500'}`}
-                                >
-                                    {votingThisItem && userVote !== -1 ? <Loader2 size={14} className="animate-spin"/> : <ThumbsUp size={14}/>}
-                                    {beta.upvotes}
-                                </button>
-                                <button
-                                    onClick={() => handleVote(beta.id, -1)}
-                                    disabled={!currentUser || votingThisItem}
-                                    className={`flex items-center gap-1 hover:text-red-600 disabled:opacity-50 ${userVote === -1 ? 'text-red-600 font-semibold' : 'text-gray-500'}`}
-                                >
-                                    {votingThisItem && userVote !== 1 ? <Loader2 size={14} className="animate-spin"/> : <ThumbsDown size={14}/>}
-                                    {/* Display downvotes if tracked, otherwise just the button */}
-                                </button>
+                                <button onClick={() => handleVote(beta.id, 1)} disabled={!currentUser || votingThisItem} className={`flex items-center gap-1 hover:text-green-600 disabled:opacity-50 ${userVote === 1 ? 'text-green-600 font-semibold' : 'text-gray-500'}`}> {votingThisItem && userVote !== -1 ? <Loader2 size={14} className="animate-spin"/> : <ThumbsUp size={14}/>} {beta.upvotes} </button>
+                                <button onClick={() => handleVote(beta.id, -1)} disabled={!currentUser || votingThisItem} className={`flex items-center gap-1 hover:text-red-600 disabled:opacity-50 ${userVote === -1 ? 'text-red-600 font-semibold' : 'text-gray-500'}`}> {votingThisItem && userVote !== 1 ? <Loader2 size={14} className="animate-spin"/> : <ThumbsDown size={14}/>} </button>
                              </div>
                           </div>
                        </div>
                     );
-                 }) : (
-                   <p className="text-sm text-center text-gray-500 py-4">No {activeBetaTab} beta available yet.</p>
-                 )
+                 }) : ( <p className="text-sm text-center text-gray-500 py-4">No {activeBetaTab} beta available yet.</p> )
               )}
            </div>
         </section>
@@ -411,10 +395,10 @@ const RouteDetailScreen: React.FC<RouteDetailScreenProps> = ({ currentUser, rout
              <div className="space-y-4 mb-4 max-h-60 overflow-y-auto">
                 {comments.length > 0 ? comments.map(comment => (
                   <div key={comment.id} className="flex gap-3 border-b pb-3 last:border-b-0">
-                     <img src={comment.avatar_url || `https://ui-avatars.com/api/?name=${getUserDisplayName(comment.user_id, currentUser)}&background=random`} alt="User avatar" className="w-8 h-8 rounded-full flex-shrink-0 mt-1"/>
+                     <img src={getUserAvatarUrl(comment, comment.user_id)} alt="User avatar" className="w-8 h-8 rounded-full flex-shrink-0 mt-1"/>
                      <div className="flex-grow">
                         <p className="text-sm">
-                           <span className="font-medium text-brand-gray">{comment.display_name || getUserDisplayName(comment.user_id, currentUser)}</span>
+                           <span className="font-medium text-brand-gray">{getUserDisplayName(comment.user_id, currentUser, comment)}</span>
                            <span className="text-xs text-gray-400 ml-1">{new Date(comment.created_at).toLocaleTimeString([], {hour: 'numeric', minute:'2-digit'})}</span>
                         </p>
                         <p className="text-sm text-gray-700 mt-1">{comment.comment_text}</p>

@@ -1,8 +1,12 @@
 import React, { useState, useMemo } from 'react';
-import { ArrowLeft, Check, Circle, Star, CalendarDays, ChevronDown, Search } from 'lucide-react';
-import { RouteData } from '../../types';
+import { ArrowLeft, Check, Circle, Star, ChevronDown, Search, Loader2 } from 'lucide-react';
+import { RouteData, ActivityLogDetails } from '../../types';
+import { supabase } from '../../supabaseClient'; // Import supabase
+import type { User } from '@supabase/supabase-js'; // Import User type
 
 interface LogClimbScreenProps {
+  currentUser: User | null; // Add currentUser
+  activeGymId: string | null; // Add activeGymId
   availableRoutes: RouteData[]; // All routes for selection (can be filtered later)
   onBack: () => void;
   onSubmitSuccess: () => void;
@@ -10,7 +14,7 @@ interface LogClimbScreenProps {
 
 type LogType = 'send' | 'attempt';
 
-const LogClimbScreen: React.FC<LogClimbScreenProps> = ({ availableRoutes, onBack, onSubmitSuccess }) => {
+const LogClimbScreen: React.FC<LogClimbScreenProps> = ({ currentUser, activeGymId, availableRoutes, onBack, onSubmitSuccess }) => {
   const [selectedRouteId, setSelectedRouteId] = useState<string>('');
   const [logType, setLogType] = useState<LogType>('send');
   const [attempts, setAttempts] = useState<number>(1);
@@ -40,39 +44,76 @@ const LogClimbScreen: React.FC<LogClimbScreenProps> = ({ availableRoutes, onBack
     setShowRouteDropdown(false);
   };
 
+  // Function to log activity
+  const logActivity = async (type: 'log_send' | 'log_attempt', route: RouteData, details: ActivityLogDetails) => {
+    if (!currentUser) return; // Should not happen if submit is enabled
+
+    const { error: logError } = await supabase.from('activity_log').insert({
+      user_id: currentUser.id,
+      gym_id: route.gym_id, // Use gym_id from the selected route
+      route_id: route.id,
+      activity_type: type,
+      details: details,
+    });
+
+    if (logError) {
+      console.error(`Error logging ${type} activity:`, logError);
+      // Non-critical error, don't block the user, maybe log to monitoring
+    } else {
+      console.log(`${type} activity logged successfully.`);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
-    if (!selectedRouteId) {
+    if (!currentUser) {
+      setError('You must be logged in to log climbs.');
+      return;
+    }
+    if (!selectedRouteId || !selectedRoute) {
       setError('Please select a route.');
       return;
     }
 
     setIsSubmitting(true);
 
-    // --- TODO: Implement Actual Log Submission Logic ---
-    console.log('Submitting Log:', {
+    // --- TODO: Implement Actual Log Submission Logic (e.g., save to user_route_progress) ---
+    // This part remains conceptual for now, focusing on activity logging
+    console.log('Submitting Climb Log (Conceptual):', {
+      userId: currentUser.id,
       routeId: selectedRouteId,
-      routeName: selectedRoute?.name,
+      gymId: selectedRoute.gym_id,
       type: logType,
-      attempts: logType === 'send' ? attempts : undefined, // Only include attempts for sends
+      attempts: logType === 'send' ? attempts : undefined,
       date: date,
       rating: rating,
       notes: notes,
     });
 
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    // Simulate API call for saving progress
+    await new Promise(resolve => setTimeout(resolve, 500));
+    const progressSaveSuccess = true; // Assume success for now
+    // --- End Conceptual Progress Save ---
 
-    // On successful submission:
-    console.log('Log submitted successfully!');
-    onSubmitSuccess(); // Navigate back
+    if (progressSaveSuccess) {
+      // Log activity *after* successful progress save
+      const activityDetails: ActivityLogDetails = {
+        route_name: selectedRoute.name,
+        route_grade: selectedRoute.grade,
+        // Add attempts only for 'send' logs
+        ...(logType === 'send' && { attempts: attempts }),
+      };
+      await logActivity(logType === 'send' ? 'log_send' : 'log_attempt', selectedRoute, activityDetails);
 
-    // Handle potential API errors here
-    // setError("Failed to save log. Please try again.");
-    // setIsSubmitting(false);
-    // --- End TODO ---
+      console.log('Log submitted successfully!');
+      onSubmitSuccess(); // Navigate back
+    } else {
+      // Handle potential API errors for saving progress here
+      setError("Failed to save log. Please try again.");
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -115,7 +156,7 @@ const LogClimbScreen: React.FC<LogClimbScreenProps> = ({ availableRoutes, onBack
                       onClick={() => handleRouteSelect(route.id)}
                       className="block w-full text-left px-3 py-2 text-sm hover:bg-gray-100 truncate"
                     >
-                      <span className={`inline-block w-3 h-3 rounded-full mr-2 ${getGradeColorClass(route.gradeColor)}`}></span>
+                      <span className={`inline-block w-3 h-3 rounded-full mr-2 ${getGradeColorClass(route.grade_color)}`}></span>
                       {route.name} ({route.grade}) - {route.location}
                     </button>
                   ))
@@ -228,34 +269,33 @@ const LogClimbScreen: React.FC<LogClimbScreenProps> = ({ availableRoutes, onBack
         {/* Submit Button */}
         <button
           type="submit"
-          disabled={isSubmitting || !selectedRouteId}
+          disabled={isSubmitting || !selectedRouteId || !currentUser}
           className="w-full bg-accent-blue hover:bg-opacity-90 text-white font-bold py-3 px-6 rounded-lg transition duration-300 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
         >
           {isSubmitting ? (
              <>
-               <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-               </svg>
+               <Loader2 className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" />
                Saving...
              </>
           ) : (
              'Save Log'
           )}
         </button>
+        {!currentUser && <p className="text-xs text-center text-red-600 mt-2">You must be logged in to log climbs.</p>}
       </form>
     </div>
   );
 };
 
 // Helper function (can be moved to utils if needed)
-const getGradeColorClass = (colorName: string): string => {
+const getGradeColorClass = (colorName: string | undefined): string => {
+  if (!colorName) return 'bg-gray-400';
   const colorMap: { [key: string]: string } = {
     'accent-red': 'bg-accent-red', 'accent-blue': 'bg-accent-blue', 'accent-yellow': 'bg-accent-yellow',
     'brand-green': 'bg-brand-green', 'accent-purple': 'bg-accent-purple', 'brand-gray': 'bg-brand-gray',
     'brand-brown': 'bg-brand-brown',
   };
-  return colorMap[colorName] || 'bg-gray-400';
+  return colorMap[colorName] || colorMap[colorName.replace('_', '-')] || 'bg-gray-400';
 };
 
 
