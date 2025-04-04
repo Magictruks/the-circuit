@@ -145,7 +145,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 
                 // Fetch sends this month, all sends (for highest grade), and beta added this month in parallel
                 const [sendsThisMonthRes, allSendsRes, betaAddedRes] = await Promise.all([
-                    supabase.from('user_route_progress').select('id', { count: 'exact', head: true }).eq('user_id', currentUser.id).not('sent_at', 'is', null).gte('sent_at', startOfMonth).lte('sent_at', endOfMonth),
+                    supabase.from('user_route_progress').select('sent_at', { count: 'exact', head: true }).eq('user_id', currentUser.id).not('sent_at', 'is', null).gte('sent_at', startOfMonth).lte('sent_at', endOfMonth),
                     supabase.from('user_route_progress').select(`route:routes ( grade )`).eq('user_id', currentUser.id).not('sent_at', 'is', null),
                     // Query for beta added this month by the user
                     supabase.from('route_beta').select('id', { count: 'exact', head: true }).eq('user_id', currentUser.id).gte('created_at', startOfMonth).lte('created_at', endOfMonth)
