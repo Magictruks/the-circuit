@@ -1,12 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
-    import { ChevronDown, Search, Bell, CheckCircle, Circle, HelpCircle, PlusCircle, Loader2, Route as RouteIcon, MessageSquare, Video as VideoIcon, PencilLine as DrawingIcon, AlertTriangle } from 'lucide-react';
-    import { AppView, ActivityLogEntry, QuickStatsData } from '../../types'; // Import QuickStatsData
+    import { ChevronDown, Search, Bell, CheckCircle, Circle, HelpCircle, PlusCircle, Loader2, Route as RouteIcon, MessageSquare, Video as VideoIcon, PencilLine as DrawingIcon, AlertTriangle, MapPin } from 'lucide-react'; // Added MapPin
+    import { AppView, ActivityLogEntry, QuickStatsData } from '../../types';
     import { supabase } from '../../supabaseClient';
     import { User } from '@supabase/supabase-js';
 
     // Helper function from ProfileScreen (consider moving to a utils file)
-    // NOTE: This JS version is still needed for display logic if highestGradeSent is used elsewhere,
-    // but the core calculation is now done in SQL.
     const getVGradeValue = (grade: string): number => {
         if (grade && grade.toUpperCase().startsWith('V')) {
             const numPart = grade.substring(1);
@@ -25,7 +23,6 @@ import React, { useState, useEffect, useCallback } from 'react';
         'brand-green': 'text-brand-green', 'accent-purple': 'text-accent-purple', 'brand-gray': 'text-brand-gray',
         'brand-brown': 'text-brand-brown',
       };
-      // Try direct lookup first, then check if it matches the key format (replace _ with -)
       return colorMap[colorName] || (colorMap[colorName.replace('_', '-')] || 'text-brand-gray');
     };
 
@@ -95,13 +92,18 @@ import React, { useState, useEffect, useCallback } from 'react';
             if (!activeGymId) { setActivityLog([]); setLoadingActivity(false); setActivityError(null); return; }
             setLoadingActivity(true); setActivityError(null);
             try {
-                // Select grade_color from the joined routes table
+                // Join routes and then locations to get location_name
                 const { data, error } = await supabase
                     .from('activity_log')
                     .select(`
                         *,
                         profile:profiles!user_id(display_name, avatar_url),
-                        route:routes(name, grade, grade_color)
+                        route:routes(
+                          name,
+                          grade,
+                          grade_color,
+                          location_info:locations ( name )
+                        )
                     `)
                     .eq('gym_id', activeGymId)
                     .order('created_at', { ascending: false })
@@ -113,16 +115,21 @@ import React, { useState, useEffect, useCallback } from 'react';
                     else { setActivityError("Failed to load activity."); }
                     setActivityLog([]);
                 } else if (data) {
-                    // Map the data, including the grade_color
-                    const mappedLogs = data.map(log => ({
-                        ...log,
-                        user_display_name: (log.profile as any)?.display_name,
-                        user_avatar_url: (log.profile as any)?.avatar_url,
-                        route_name: (log.route as any)?.name || log.details?.route_name,
-                        route_grade: (log.route as any)?.grade || log.details?.route_grade,
-                        route_grade_color: (log.route as any)?.grade_color || log.details?.route_grade_color, // Get color from route or details
-                        details: log.details,
-                    }));
+                    // Map the data, including the location_name
+                    const mappedLogs = data.map(log => {
+                        const routeInfo = log.route as any; // Cast for easier access
+                        const locationInfo = routeInfo?.location_info as any;
+                        return {
+                            ...log,
+                            user_display_name: (log.profile as any)?.display_name,
+                            user_avatar_url: (log.profile as any)?.avatar_url,
+                            route_name: routeInfo?.name || log.details?.route_name,
+                            route_grade: routeInfo?.grade || log.details?.route_grade,
+                            route_grade_color: routeInfo?.grade_color || log.details?.route_grade_color,
+                            location_name: locationInfo?.name || log.details?.location_name, // Get location name
+                            details: log.details, // Keep original details as fallback
+                        };
+                    });
                     setActivityLog(mappedLogs as ActivityLogEntry[]);
                 } else {
                     setActivityLog([]);
@@ -136,7 +143,7 @@ import React, { useState, useEffect, useCallback } from 'react';
             }
         }, [activeGymId]);
 
-        // --- Fetch Quick Stats (MODIFIED to use RPC) ---
+        // --- Fetch Quick Stats (using RPC) ---
         const fetchQuickStats = useCallback(async (gymId: string | null) => {
             if (!currentUser || !gymId) {
                 setQuickStats(null);
@@ -147,7 +154,6 @@ import React, { useState, useEffect, useCallback } from 'react';
             setLoadingQuickStats(true);
             setQuickStatsError(null);
             try {
-                // Call the RPC function
                 const { data, error: rpcError } = await supabase.rpc('get_user_gym_quick_stats', {
                     user_id_in: currentUser.id,
                     gym_id_in: gymId
@@ -159,8 +165,6 @@ import React, { useState, useEffect, useCallback } from 'react';
                 }
 
                 if (data) {
-                    // Data should be the JSON object returned by the function
-                    // Ensure the structure matches QuickStatsData
                     const statsData: QuickStatsData = {
                         sendsThisMonth: data.sendsThisMonth,
                         highestGradeSent: data.highestGradeSent,
@@ -168,9 +172,8 @@ import React, { useState, useEffect, useCallback } from 'react';
                     };
                     setQuickStats(statsData);
                 } else {
-                    // Handle case where RPC returns no data (shouldn't happen with json_build_object)
                     console.warn("RPC get_user_gym_quick_stats returned no data.");
-                    setQuickStats({ sendsThisMonth: 0, highestGradeSent: null, betaAddedThisMonth: 0 }); // Set default zero stats
+                    setQuickStats({ sendsThisMonth: 0, highestGradeSent: null, betaAddedThisMonth: 0 });
                 }
 
             } catch (err: any) {
@@ -180,13 +183,13 @@ import React, { useState, useEffect, useCallback } from 'react';
             } finally {
                 setLoadingQuickStats(false);
             }
-        }, [currentUser]); // Dependency remains currentUser
+        }, [currentUser]);
 
         // Fetch data on mount or when user/gym changes
         useEffect(() => {
             fetchActivityLog();
-            fetchQuickStats(activeGymId); // Pass activeGymId here
-        }, [fetchActivityLog, fetchQuickStats, activeGymId]); // Add activeGymId dependency
+            fetchQuickStats(activeGymId);
+        }, [fetchActivityLog, fetchQuickStats, activeGymId]);
 
 
         // --- Render Activity Item ---
@@ -194,29 +197,28 @@ import React, { useState, useEffect, useCallback } from 'react';
             let icon = <HelpCircle size={18} className="text-gray-500" />; let text = `performed an action.`;
             const userName = <span className="font-medium">{log.user_display_name || `User ${log.user_id.substring(0, 6)}`}</span>;
 
-            // Determine if the route exists and create the link/span
             const routeName = log.route_name || log.details?.route_name || 'a route';
             const routeGrade = log.route_grade || log.details?.route_grade || 'N/A';
-            const routeGradeColor = log.route_grade_color || log.details?.route_grade_color; // Get color
-            const textColorClass = getGradeTextColorClass(routeGradeColor); // Get text color class
+            const routeGradeColor = log.route_grade_color || log.details?.route_grade_color;
+            const locationName = log.location_name || log.details?.location_name; // Get location name
+            const textColorClass = getGradeTextColorClass(routeGradeColor);
 
             const routeDisplay = (
                 <>
-                    {/* REMOVED color indicator span */}
                     {log.route_id && log.route_name ? (
                         <button
                             onClick={() => onNavigate('routeDetail', { routeId: log.route_id })}
-                            // Apply text color class here
                             className={`font-medium hover:underline ${textColorClass}`}
                         >
                             {routeName} ({routeGrade})
                         </button>
                     ) : (
-                        // Apply text color class here
                         <span className={`font-medium ${textColorClass}`}>
                             {routeName} ({routeGrade})
                         </span>
                     )}
+                    {/* Display location if available */}
+                    {locationName && <span className="text-gray-500 text-xs"> at {locationName}</span>}
                 </>
             );
 
@@ -231,7 +233,6 @@ import React, { useState, useEffect, useCallback } from 'react';
                 <div key={log.id} className="bg-white p-3 rounded-lg shadow flex items-start space-x-3">
                     <img src={getUserAvatarUrl(log)} alt={log.user_display_name || 'User Avatar'} className="w-10 h-10 rounded-full object-cover flex-shrink-0 mt-1"/>
                     <div className="flex-grow">
-                        {/* Wrap text in a div to allow inline elements */}
                         <div className="text-sm">{userName} {text}</div>
                         <p className="text-xs text-gray-500 mt-0.5">{timeAgo(log.created_at)}</p>
                     </div>
@@ -249,7 +250,6 @@ import React, { useState, useEffect, useCallback } from 'react';
                 return <div className="p-6 text-center text-red-500"> <AlertTriangle size={20} className="inline mr-1 mb-0.5"/> {quickStatsError} </div>;
             }
             if (!quickStats) {
-                // Changed to show 0/N/A instead of 'unavailable' when data is fetched but empty
                 return (
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-center">
                         <div className="p-3 bg-accent-blue/10 rounded"> <p className="text-2xl font-bold text-accent-blue">0</p> <p className="text-sm text-brand-gray">Sends This Month</p> </div>
@@ -258,12 +258,10 @@ import React, { useState, useEffect, useCallback } from 'react';
                     </div>
                 );
             }
-            // Display updated stats including betaAddedThisMonth
             return (
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-center">
                     <div className="p-3 bg-accent-blue/10 rounded"> <p className="text-2xl font-bold text-accent-blue">{quickStats.sendsThisMonth}</p> <p className="text-sm text-brand-gray">Sends This Month</p> </div>
                     <div className="p-3 bg-accent-purple/10 rounded"> <p className="text-2xl font-bold text-accent-purple">{quickStats.highestGradeSent || 'N/A'}</p> <p className="text-sm text-brand-gray">Highest Grade</p> </div>
-                    {/* Updated stat */}
                     <div className="p-3 bg-accent-yellow/10 rounded"> <p className="text-2xl font-bold text-accent-yellow">{quickStats.betaAddedThisMonth}</p> <p className="text-sm text-brand-gray">Beta Added (Month)</p> </div>
                 </div>
             );
@@ -287,7 +285,7 @@ import React, { useState, useEffect, useCallback } from 'react';
                 <main className="flex-grow p-4 space-y-6 overflow-y-auto pb-20">
                     {/* Quick Stats Section */}
                     <section className="bg-white p-4 rounded-lg shadow">
-                        <h2 className="text-lg font-semibold text-brand-gray mb-3">Quick Stats ({activeGymName})</h2> {/* Indicate filtered gym */}
+                        <h2 className="text-lg font-semibold text-brand-gray mb-3">Quick Stats ({activeGymName})</h2>
                         {renderQuickStats()}
                     </section>
 

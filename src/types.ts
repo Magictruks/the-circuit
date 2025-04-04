@@ -2,13 +2,24 @@ import type { User } from '@supabase/supabase-js';
 
     // --- Core Data Structures ---
 
+    // NEW: Location Data Structure
+    export interface LocationData {
+      id: string; // uuid from DB
+      gym_id: string; // uuid from DB
+      name: string; // text from DB
+      description?: string | null; // text from DB (nullable)
+      created_at: string; // timestamptz from DB
+    }
+
+
     export interface RouteData {
       id: string; // Unique identifier for the route (matches Supabase)
       gym_id: string; // Foreign key to the gym this route belongs to (matches Supabase)
       name: string; // matches Supabase
       grade: string; // matches Supabase
       grade_color: string; // matches Supabase (snake_case from DB)
-      location: string; // matches Supabase
+      location: string; // OLD location text field (kept for compatibility for now)
+      location_id: string | null; // NEW: Foreign key to the locations table (matches Supabase)
       setter?: string | null; // matches Supabase (optional)
       date_set: string; // matches Supabase (ISO 8601 date string)
       description?: string | null; // matches Supabase (optional)
@@ -21,7 +32,8 @@ import type { User } from '@supabase/supabase-js';
       hasComments?: boolean; // Flag if any comments exist for this route
       hasNotes?: boolean; // Flag if the current user has notes for this route
       isOnWishlist?: boolean; // Flag if the route is on the current user's wishlist
-      rating?: number | null; // User's rating for the route - ADDED
+      rating?: number | null; // User's rating for the route
+      location_name?: string; // Optional: Populated by joins to display location name
     }
 
 
@@ -126,6 +138,7 @@ import type { User } from '@supabase/supabase-js';
       route_grade?: string;
       gym_name?: string;
       route_grade_color?: string; // ADDED
+      location_name?: string; // ADDED: Location name for context
 
       // Specific fields based on activity_type
       comment_snippet?: string; // for add_comment
@@ -150,6 +163,7 @@ import type { User } from '@supabase/supabase-js';
       route_grade?: string; // Can override details if joined
       route_grade_color?: string; // ADDED: Can override details if joined
       gym_name?: string; // Can override details if joined
+      location_name?: string; // ADDED: Can override details if joined
     }
 
     // --- Stats ---

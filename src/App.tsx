@@ -10,12 +10,10 @@ import React, { useState, useEffect, useCallback } from 'react';
     import ProfileScreen from './components/profile/ProfileScreen';
     import DiscoverScreen from './components/discover/DiscoverScreen';
     import BottomNavBar from './components/dashboard/BottomNavBar';
-    import { AppView, RouteData, UserMetadata, GymData } from './types';
+    import { AppView, RouteData, UserMetadata, GymData, LocationData } from './types'; // Added LocationData
     import { supabase } from './supabaseClient';
     import type { User } from '@supabase/supabase-js';
     import { Loader2 } from 'lucide-react'; // Import Loader
-
-    // --- Placeholder Data --- (Removed)
 
     // --- Global State ---
     type OnboardingStep = 'welcome' | 'auth' | 'gymSelection' | 'complete';
@@ -28,15 +26,15 @@ import React, { useState, useEffect, useCallback } from 'react';
       const [activeGymId, setActiveGymId] = useState<string | null>(null);
       const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
       const [isAuthenticated, setIsAuthenticated] = useState(false);
-      const [currentUser, setCurrentUser] = useState<User | null>(null); // Keep track of the full User object
+      const [currentUser, setCurrentUser] = useState<User | null>(null);
       const [userMetadata, setUserMetadata] = useState<UserMetadata | null>(null);
       const [gymDetails, setGymDetails] = useState<Map<string, GymData>>(new Map());
       const [isLoadingAuth, setIsLoadingAuth] = useState(true);
       const [isLoadingData, setIsLoadingData] = useState(false);
       const [isLoadingGymDetails, setIsLoadingGymDetails] = useState(false);
-      const [initialSearchTerm, setInitialSearchTerm] = useState<string | undefined>(undefined); // State for initial search term
+      const [initialSearchTerm, setInitialSearchTerm] = useState<string | undefined>(undefined);
 
-      // State for fetched route details
+      // State for fetched route details (used by RouteDetailScreen and AddBetaScreen)
       const [selectedRouteData, setSelectedRouteData] = useState<RouteData | null | undefined>(undefined); // undefined: not fetched, null: error/not found
       const [isLoadingRouteDetail, setIsLoadingRouteDetail] = useState(false);
       const [routeDetailError, setRouteDetailError] = useState<string | null>(null);
@@ -143,25 +141,55 @@ import React, { useState, useEffect, useCallback } from 'react';
       }, [currentUser, fetchUserMetadata, isLoadingAuth]);
 
 
-      // --- Effect for Fetching Selected Route Details ---
+      // --- Effect for Fetching Selected Route Details (MODIFIED to include location) ---
       useEffect(() => {
         const fetchRouteDetails = async () => {
           if (!selectedRouteId) { setSelectedRouteData(undefined); setIsLoadingRouteDetail(false); setRouteDetailError(null); return; }
           setIsLoadingRouteDetail(true); setRouteDetailError(null); setSelectedRouteData(undefined);
           try {
-            // Fetch route and augment with user-specific data in one go if possible,
-            // or fetch base route then fetch progress/beta/comments separately like in RoutesScreen
-            // For simplicity here, just fetch base route data. RouteDetailScreen handles its own progress/beta/comments fetching.
-            const { data, error } = await supabase.from('routes').select('*').eq('id', selectedRouteId).single();
-            if (error) { console.error('[Route Detail Effect] Error fetching route details:', error); setRouteDetailError(error.code === 'PGRST116' ? 'Route not found.' : `Failed to load route details: ${error.message}`); setSelectedRouteData(null); }
-            else if (data) { const mappedData: RouteData = { ...data }; setSelectedRouteData(mappedData); }
-            else { setRouteDetailError('Route not found.'); setSelectedRouteData(null); }
-          } catch (err) { console.error("[Route Detail Effect] Unexpected error fetching route details:", err); setRouteDetailError("An unexpected error occurred while fetching route details."); setSelectedRouteData(null); }
-          finally { setIsLoadingRouteDetail(false); }
+            // Fetch route and join locations table to get location name
+            const { data, error } = await supabase
+              .from('routes')
+              .select(`
+                *,
+                location_name:locations ( name )
+              `)
+              .eq('id', selectedRouteId)
+              .single();
+
+            if (error) {
+              console.error('[Route Detail Effect] Error fetching route details:', error);
+              setRouteDetailError(error.code === 'PGRST116' ? 'Route not found.' : `Failed to load route details: ${error.message}`);
+              setSelectedRouteData(null);
+            } else if (data) {
+              // Map the data to include location_name directly
+              const mappedData: RouteData = {
+                ...data,
+                location_name: (data.location_name as any)?.name || null, // Extract name, handle null
+              };
+              setSelectedRouteData(mappedData);
+            } else {
+              setRouteDetailError('Route not found.');
+              setSelectedRouteData(null);
+            }
+          } catch (err) {
+            console.error("[Route Detail Effect] Unexpected error fetching route details:", err);
+            setRouteDetailError("An unexpected error occurred while fetching route details.");
+            setSelectedRouteData(null);
+          } finally {
+            setIsLoadingRouteDetail(false);
+          }
         };
-        if ((appView === 'routeDetail' || appView === 'addBeta') && selectedRouteId) { fetchRouteDetails(); }
-        else { setSelectedRouteData(undefined); setIsLoadingRouteDetail(false); setRouteDetailError(null); }
-      }, [selectedRouteId, appView]);
+        // Fetch only when needed for detail or beta screen
+        if ((appView === 'routeDetail' || appView === 'addBeta') && selectedRouteId) {
+          fetchRouteDetails();
+        } else {
+          // Clear data if not on relevant screens or no route selected
+          setSelectedRouteData(undefined);
+          setIsLoadingRouteDetail(false);
+          setRouteDetailError(null);
+        }
+      }, [selectedRouteId, appView]); // Re-run when route ID or view changes
 
 
       // --- Effect for Fetching Routes for the Active Gym (for Log Screen) ---
@@ -174,9 +202,13 @@ import React, { useState, useEffect, useCallback } from 'react';
           }
           setIsLoadingActiveGymRoutes(true);
           try {
+            // Include location join here as well if needed for LogClimbScreen display
             const { data, error } = await supabase
               .from('routes')
-              .select('id, gym_id, name, grade, grade_color, location, date_set') // Select needed fields
+              .select(`
+                id, gym_id, name, grade, grade_color, date_set,
+                location_name:locations ( name )
+              `) // Select needed fields + location name
               .eq('gym_id', activeGymId)
               .order('name', { ascending: true });
 
@@ -184,7 +216,12 @@ import React, { useState, useEffect, useCallback } from 'react';
               console.error('[Active Gym Routes Effect] Error fetching routes:', error);
               setActiveGymRoutes([]);
             } else {
-              setActiveGymRoutes(data || []);
+               // Map the data to include location_name directly
+              const mappedRoutes = data.map(r => ({
+                ...r,
+                location_name: (r.location_name as any)?.name || null,
+              }));
+              setActiveGymRoutes(mappedRoutes as RouteData[]);
             }
           } catch (err) {
             console.error("[Active Gym Routes Effect] Unexpected error:", err);
@@ -284,7 +321,6 @@ import React, { useState, useEffect, useCallback } from 'react';
           let currentScreen;
           switch (appView) {
             case 'dashboard': currentScreen = <DashboardScreen currentUser={currentUser} selectedGyms={selectedGymIds} activeGymId={activeGymId} onSwitchGym={handleSwitchGym} getGymNameById={getGymNameById} onNavigateToGymSelection={handleNavigateToGymSelection} onNavigate={handleNavigate} />; break;
-            // Pass currentUser to RoutesScreen
             case 'routes': currentScreen = <RoutesScreen currentUser={currentUser} activeGymId={activeGymId} activeGymName={activeGymName} onNavigate={handleNavigate} initialSearchTerm={initialSearchTerm} />; break;
             case 'routeDetail': currentScreen = <RouteDetailScreen currentUser={currentUser} route={selectedRouteData} isLoading={isLoadingRouteDetail} error={routeDetailError} onBack={handleBack} onNavigate={handleNavigate} />; break;
             case 'addBeta':
