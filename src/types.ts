@@ -30,14 +30,15 @@ export interface GymData {
   // Add other relevant gym details if needed (e.g., address, website, type)
 }
 
+// Updated UserMetadata to match 'profiles' table structure
 export interface UserMetadata {
-  user_id: string; // Corresponds to auth.users.id
+  user_id: string; // Corresponds to auth.users.id and is the primary key
   display_name: string;
   selected_gym_ids: string[]; // Array of gym UUIDs
   current_gym_id: string | null; // UUID of the currently active gym
+  avatar_url?: string | null; // Optional avatar URL
   created_at: string; // ISO 8601 timestamp
   updated_at: string; // ISO 8601 timestamp
-  avatar_url?: string | null; // Add avatar URL from profiles table
 }
 
 
@@ -45,11 +46,23 @@ export interface UserMetadata {
 
 export interface UserProgress {
   attempts: number;
-  sentDate: string | null; // ISO 8601 date string if sent
+  sent_at: string | null; // ISO 8601 date string if sent
   rating: number | null; // User's personal rating (e.g., 1-5 stars)
   notes: string; // Private notes about the climb
   wishlist: boolean; // Is the route on the user's wishlist?
 }
+
+// Type for combining progress and route data for Logbook display
+export interface LogbookEntry extends RouteData {
+  // Inherits all fields from RouteData
+  user_progress_attempts: number;
+  user_progress_sent_at: string | null;
+  user_progress_rating: number | null;
+  user_progress_notes: string;
+  user_progress_wishlist: boolean;
+  user_progress_updated_at: string; // Add updated_at from progress table for sorting
+}
+
 
 export type BetaType = 'text' | 'video' | 'drawing'; // Drawing might be image upload initially
 
@@ -68,7 +81,7 @@ export interface BetaContent {
 
   // Optional fields (to be populated by joining/fetching profile data later)
   display_name?: string; // User's display name
-  avatar_url?: string; // User's avatar URL
+  avatar_url?: string | null; // User's avatar URL
 }
 
 
@@ -83,7 +96,7 @@ export interface Comment {
 
   // Optional fields (to be populated by joining/fetching profile data later)
   display_name?: string; // User's display name
-  avatar_url?: string; // User's avatar URL
+  avatar_url?: string | null; // User's avatar URL
 }
 
 // --- Activity Log ---
@@ -133,18 +146,8 @@ export type AppView =
   | 'profile';
 
 // --- Supabase Specific Types (Example - Adapt as needed) ---
-// It's often better to generate these using Supabase CLI if possible,
-// but defining manually is okay for smaller projects.
 
-// Example structure if you had a 'profiles' table separate from auth.users
+// Explicitly define UserProfile based on UserMetadata which matches 'profiles' table
 export interface UserProfile extends UserMetadata {
-  // Inherits fields from UserMetadata
-  // Add any other profile-specific fields here
-  // e.g., bio: string | null;
+  // Inherits fields from UserMetadata which should match 'profiles'
 }
-
-// You might not need this if using auth.users directly with metadata
-// export interface AppUser extends User {
-//   // Extend Supabase User type if needed
-//   profile?: UserProfile; // Link to the profile data
-// }
