@@ -5,6 +5,8 @@ import React, { useState, useEffect, useCallback } from 'react';
     import { User } from '@supabase/supabase-js';
 
     // Helper function from ProfileScreen (consider moving to a utils file)
+    // NOTE: This JS version is still needed for display logic if highestGradeSent is used elsewhere,
+    // but the core calculation is now done in SQL.
     const getVGradeValue = (grade: string): number => {
         if (grade && grade.toUpperCase().startsWith('V')) {
             const numPart = grade.substring(1);
@@ -15,7 +17,7 @@ import React, { useState, useEffect, useCallback } from 'react';
         return -1;
     };
 
-    // Helper to get Tailwind TEXT color class (MODIFIED)
+    // Helper to get Tailwind TEXT color class
     const getGradeTextColorClass = (colorName: string | undefined): string => {
       if (!colorName) return 'text-brand-gray'; // Default text color if missing
       const colorMap: { [key: string]: string } = {
@@ -134,56 +136,57 @@ import React, { useState, useEffect, useCallback } from 'react';
             }
         }, [activeGymId]);
 
-        // --- Fetch Quick Stats ---
-        const fetchQuickStats = useCallback(async () => {
-            if (!currentUser) { setQuickStats(null); setLoadingQuickStats(false); setQuickStatsError(null); return; }
-            setLoadingQuickStats(true); setQuickStatsError(null);
+        // --- Fetch Quick Stats (MODIFIED to use RPC) ---
+        const fetchQuickStats = useCallback(async (gymId: string | null) => {
+            if (!currentUser || !gymId) {
+                setQuickStats(null);
+                setLoadingQuickStats(false);
+                setQuickStatsError(null);
+                return;
+            }
+            setLoadingQuickStats(true);
+            setQuickStatsError(null);
             try {
-                const now = new Date();
-                const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-                const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999).toISOString();
+                // Call the RPC function
+                const { data, error: rpcError } = await supabase.rpc('get_user_gym_quick_stats', {
+                    user_id_in: currentUser.id,
+                    gym_id_in: gymId
+                });
 
-                // Fetch sends this month, all sends (for highest grade), and beta added this month in parallel
-                const [sendsThisMonthRes, allSendsRes, betaAddedRes] = await Promise.all([
-                    supabase.from('user_route_progress').select('sent_at', { count: 'exact', head: true }).eq('user_id', currentUser.id).not('sent_at', 'is', null).gte('sent_at', startOfMonth).lte('sent_at', endOfMonth),
-                    supabase.from('user_route_progress').select(`route:routes ( grade )`).eq('user_id', currentUser.id).not('sent_at', 'is', null),
-                    // Query for beta added this month by the user
-                    supabase.from('route_beta').select('id', { count: 'exact', head: true }).eq('user_id', currentUser.id).gte('created_at', startOfMonth).lte('created_at', endOfMonth)
-                ]);
-
-                // Process Sends This Month
-                if (sendsThisMonthRes.error) console.error("Error fetching sends this month:", sendsThisMonthRes.error);
-                const sendsThisMonth = sendsThisMonthRes.count ?? 0;
-
-                // Process Highest Grade
-                let highestGradeSent: string | null = null;
-                if (allSendsRes.error) { console.error("Error fetching all sends for grade:", allSendsRes.error); }
-                else if (allSendsRes.data) {
-                    let maxGradeValue = -1;
-                    allSendsRes.data.forEach(item => {
-                        const grade = (item.route as any)?.grade;
-                        if (grade) { const gradeValue = getVGradeValue(grade); if (gradeValue > maxGradeValue) { maxGradeValue = gradeValue; highestGradeSent = grade; } }
-                    });
+                if (rpcError) {
+                    console.error("Error calling RPC get_user_gym_quick_stats:", rpcError);
+                    throw new Error(`Failed to load quick stats: ${rpcError.message}`);
                 }
 
-                // Process Beta Added This Month Count
-                if (betaAddedRes.error) console.error("Error fetching beta added count:", betaAddedRes.error);
-                const betaAddedThisMonth = betaAddedRes.count ?? 0;
-
-                // Update state with new stats structure
-                setQuickStats({ sendsThisMonth, highestGradeSent, betaAddedThisMonth });
+                if (data) {
+                    // Data should be the JSON object returned by the function
+                    // Ensure the structure matches QuickStatsData
+                    const statsData: QuickStatsData = {
+                        sendsThisMonth: data.sendsThisMonth,
+                        highestGradeSent: data.highestGradeSent,
+                        betaAddedThisMonth: data.betaAddedThisMonth,
+                    };
+                    setQuickStats(statsData);
+                } else {
+                    // Handle case where RPC returns no data (shouldn't happen with json_build_object)
+                    console.warn("RPC get_user_gym_quick_stats returned no data.");
+                    setQuickStats({ sendsThisMonth: 0, highestGradeSent: null, betaAddedThisMonth: 0 }); // Set default zero stats
+                }
 
             } catch (err: any) {
-                console.error("Unexpected error fetching quick stats:", err);
+                console.error("Unexpected error fetching quick stats via RPC:", err);
                 setQuickStatsError(err.message || "An unexpected error occurred fetching stats.");
                 setQuickStats(null);
             } finally {
                 setLoadingQuickStats(false);
             }
-        }, [currentUser]);
+        }, [currentUser]); // Dependency remains currentUser
 
-        // Fetch data on mount or when user changes
-        useEffect(() => { fetchActivityLog(); fetchQuickStats(); }, [fetchActivityLog, fetchQuickStats]);
+        // Fetch data on mount or when user/gym changes
+        useEffect(() => {
+            fetchActivityLog();
+            fetchQuickStats(activeGymId); // Pass activeGymId here
+        }, [fetchActivityLog, fetchQuickStats, activeGymId]); // Add activeGymId dependency
 
 
         // --- Render Activity Item ---
@@ -246,7 +249,14 @@ import React, { useState, useEffect, useCallback } from 'react';
                 return <div className="p-6 text-center text-red-500"> <AlertTriangle size={20} className="inline mr-1 mb-0.5"/> {quickStatsError} </div>;
             }
             if (!quickStats) {
-                return <p className="text-center text-gray-500 p-6">Stats unavailable.</p>;
+                // Changed to show 0/N/A instead of 'unavailable' when data is fetched but empty
+                return (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-center">
+                        <div className="p-3 bg-accent-blue/10 rounded"> <p className="text-2xl font-bold text-accent-blue">0</p> <p className="text-sm text-brand-gray">Sends This Month</p> </div>
+                        <div className="p-3 bg-accent-purple/10 rounded"> <p className="text-2xl font-bold text-accent-purple">N/A</p> <p className="text-sm text-brand-gray">Highest Grade</p> </div>
+                        <div className="p-3 bg-accent-yellow/10 rounded"> <p className="text-2xl font-bold text-accent-yellow">0</p> <p className="text-sm text-brand-gray">Beta Added (Month)</p> </div>
+                    </div>
+                );
             }
             // Display updated stats including betaAddedThisMonth
             return (
@@ -277,7 +287,7 @@ import React, { useState, useEffect, useCallback } from 'react';
                 <main className="flex-grow p-4 space-y-6 overflow-y-auto pb-20">
                     {/* Quick Stats Section */}
                     <section className="bg-white p-4 rounded-lg shadow">
-                        <h2 className="text-lg font-semibold text-brand-gray mb-3">Quick Stats</h2>
+                        <h2 className="text-lg font-semibold text-brand-gray mb-3">Quick Stats ({activeGymName})</h2> {/* Indicate filtered gym */}
                         {renderQuickStats()}
                     </section>
 
