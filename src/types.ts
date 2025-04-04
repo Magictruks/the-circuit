@@ -187,7 +187,8 @@ import type { User } from '@supabase/supabase-js';
       | 'addBeta'
       | 'log'
       | 'discover'
-      | 'profile';
+      | 'profile'
+      | 'settings'; // Added settings view
 
     // --- Supabase Specific Types (Example - Adapt as needed) ---
 

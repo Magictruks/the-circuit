@@ -25,7 +25,7 @@ import React, { useState, useEffect, useCallback } from 'react';
        currentUser: User | null;
        userMetadata: UserMetadata | null;
        onNavigate: (view: AppView, data?: string | { routeId?: string; searchTerm?: string }) => void; // Updated data type
-       onLogout: () => Promise<void>;
+       onLogout: () => Promise<void>; // Keep onLogout prop for now, but button moved
        getGymNameById: (id: string | null) => string;
     }
 
@@ -39,7 +39,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 
     const ProfileScreen: React.FC<ProfileScreenProps> = ({ currentUser, userMetadata, onNavigate, onLogout, getGymNameById }) => {
       const [activeTab, setActiveTab] = useState<ProfileTab>('logbook');
-      const [isLoggingOut, setIsLoggingOut] = useState(false);
+      // const [isLoggingOut, setIsLoggingOut] = useState(false); // Logout state moved to SettingsScreen
       const [isEditing, setIsEditing] = useState(false);
       const [editDisplayName, setEditDisplayName] = useState('');
       const [editError, setEditError] = useState<string | null>(null);
@@ -81,7 +81,7 @@ import React, { useState, useEffect, useCallback } from 'react';
               )
             `) // Removed routes.location
             .eq('user_id', currentUser.id)
-            .or('sent_at.not.is.null,attempts.gt.0')
+            .or('sent_at.not.is.null,attempts.gt.0') // Fetch sends OR attempts > 0
             .order('updated_at', { ascending: false });
 
           if (error) {
@@ -99,7 +99,7 @@ import React, { useState, useEffect, useCallback } from 'react';
                 user_progress_attempts: item.attempts,
                 user_progress_sent_at: item.sent_at,
                 user_progress_rating: item.rating,
-                user_progress_notes: item.notes,
+                user_progress_notes: item.notes, // Keep as potentially null
                 user_progress_wishlist: item.wishlist,
                 user_progress_updated_at: item.updated_at,
               };
@@ -133,7 +133,7 @@ import React, { useState, useEffect, useCallback } from 'react';
             `) // Removed routes.location
             .eq('user_id', currentUser.id)
             .eq('wishlist', true)
-            .order('created_at', { referencedTable: 'routes', ascending: false });
+            .order('created_at', { referencedTable: 'routes', ascending: false }); // Order by route creation date
 
           if (error) {
             console.error("Error fetching wishlist:", error);
@@ -216,32 +216,49 @@ import React, { useState, useEffect, useCallback } from 'react';
       }, [fetchLogbook, fetchWishlist, fetchStats]);
 
       // --- Handlers ---
-      const handleLogoutClick = async () => { setIsLoggingOut(true); await onLogout(); };
+      // const handleLogoutClick = async () => { setIsLoggingOut(true); await onLogout(); }; // Moved to SettingsScreen
       const handleEditClick = () => { setEditError(null); setEditDisplayName(currentDisplayName); setIsEditing(true); };
       const handleCancelEdit = () => { setIsEditing(false); setEditError(null); };
       const handleSaveEdit = async () => {
+        if (!currentUser) return; // Guard against missing user
         const trimmedName = editDisplayName.trim();
         if (!trimmedName) { setEditError("Display name cannot be empty."); return; }
         if (trimmedName === currentDisplayName) { setIsEditing(false); return; }
         setIsSaving(true); setEditError(null);
 
-        const response = await Promise.all([
-            supabase.from('profiles').update({ display_name: trimmedName }).eq('user_id', currentUser?.id),
-            supabase.auth.updateUser({ data: { display_name: trimmedName } })
-        ]);
+        try {
+            // Update profile table first
+            const { error: profileUpdateError } = await supabase
+                .from('profiles')
+                .update({ display_name: trimmedName })
+                .eq('user_id', currentUser.id);
 
-        const [profileUpdateResponse, authUpdateResponse] = response;
-        const { error: profileUpdateError } = profileUpdateResponse;
-        const { error: authUpdateError } = authUpdateResponse;
-        if (profileUpdateError) { console.error("Error updating profile:", profileUpdateError); setEditError(`Failed to update name: ${profileUpdateError.message}`); setIsSaving(false); return; }
-        if (authUpdateError) { console.error("Error updating auth user metadata:", authUpdateError); setEditError(`Failed to update name: ${authUpdateError.message}`); setIsSaving(false); return; }
-        console.log("Profile updated successfully.");
-        setEditDisplayName(trimmedName);
-        setEditError(null);
+            if (profileUpdateError) throw profileUpdateError;
 
-        setIsSaving(false);
-          setIsEditing(false);
-          // Consider refetching userMetadata or relying on App.tsx update
+            // Then update auth user metadata
+            const { error: authUpdateError } = await supabase.auth.updateUser({
+                data: { display_name: trimmedName }
+            });
+
+            if (authUpdateError) {
+                // Attempt to revert profile update? Maybe not necessary, log error.
+                console.error("Auth metadata update failed after profile update:", authUpdateError);
+                throw new Error(`Auth update failed: ${authUpdateError.message}. Profile might be updated.`);
+            }
+
+            console.log("Profile and auth metadata updated successfully.");
+            // Manually update local state to reflect change immediately
+            // This relies on App.tsx eventually refetching, but provides instant feedback
+            // setUserMetadata(prev => prev ? { ...prev, display_name: trimmedName } : null);
+            // Let App.tsx handle the refetch via onAuthStateChange or direct call
+            setIsEditing(false);
+
+        } catch (error: any) {
+            console.error("Error saving display name:", error);
+            setEditError(`Failed to update name: ${error.message}`);
+        } finally {
+            setIsSaving(false);
+        }
       };
 
       // --- Rendering Functions ---
@@ -340,7 +357,12 @@ import React, { useState, useEffect, useCallback } from 'react';
                    <div className="text-sm opacity-90 mt-1 flex items-start gap-1"> <MapPin size={14} className="mt-0.5 flex-shrink-0"/> <span className="truncate"> {userHomeGymIds.length > 0 ? userHomeGymIds.map(id => getGymNameById(id)).join(', ') : 'No gyms selected'} </span> </div>
                 </div>
              </div>
-             <div className="absolute top-4 right-4 flex gap-2"> <button className="text-white/80 hover:text-white"><Settings size={20} /></button> </div>
+             {/* Settings Button */}
+             <div className="absolute top-4 right-4 flex gap-2">
+                <button onClick={() => onNavigate('settings')} className="text-white/80 hover:text-white">
+                   <Settings size={20} />
+                </button>
+             </div>
           </header>
 
           {/* Main Content Area */}
@@ -359,10 +381,10 @@ import React, { useState, useEffect, useCallback } from 'react';
               {activeTab === 'stats' && renderStats()}
             </div>
 
-            {/* Logout Section */}
-            <div className="mt-6 text-center">
+            {/* Logout Section - REMOVED */}
+            {/* <div className="mt-6 text-center">
                <button onClick={handleLogoutClick} disabled={isLoggingOut} className="text-sm text-brand-gray hover:text-accent-red flex items-center justify-center gap-1 mx-auto disabled:opacity-50 disabled:cursor-wait"> {isLoggingOut ? ( <> <Loader2 size={16} className="animate-spin mr-1"/> Logging out... </> ) : ( <> <LogOut size={16} /> Logout </> )} </button>
-            </div>
+            </div> */}
           </main>
         </div>
       );

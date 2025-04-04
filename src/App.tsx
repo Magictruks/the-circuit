@@ -9,6 +9,7 @@ import React, { useState, useEffect, useCallback } from 'react';
     import LogClimbScreen from './components/log/LogClimbScreen';
     import ProfileScreen from './components/profile/ProfileScreen';
     import DiscoverScreen from './components/discover/DiscoverScreen';
+    import SettingsScreen from './components/settings/SettingsScreen'; // Import SettingsScreen
     import BottomNavBar from './components/dashboard/BottomNavBar';
     import { AppView, RouteData, UserMetadata, GymData, LocationData } from './types'; // Added LocationData
     import { supabase } from './supabaseClient';
@@ -206,7 +207,7 @@ import React, { useState, useEffect, useCallback } from 'react';
             const { data, error } = await supabase
               .from('routes')
               .select(`
-                id, gym_id, name, grade, grade_color, date_set,
+                id, gym_id, name, grade, grade_color, date_set, location_id,
                 location_name:locations ( name )
               `) // Select needed fields + location name
               .eq('gym_id', activeGymId)
@@ -235,7 +236,11 @@ import React, { useState, useEffect, useCallback } from 'react';
 
 
       // Update previous view state
-      useEffect(() => { setPreviousAppView(currentView => (appView !== 'log' ? appView : currentView)); }, [appView]);
+      useEffect(() => {
+        // Store the previous view unless it's one we want to ignore for back navigation
+        const viewsToIgnoreForBack = ['log', 'settings'];
+        setPreviousAppView(currentView => (viewsToIgnoreForBack.includes(appView) ? currentView : appView));
+      }, [appView]);
 
 
       // --- Navigation and Action Handlers ---
@@ -288,10 +293,11 @@ import React, { useState, useEffect, useCallback } from 'react';
       const handleBack = () => {
         if (appView === 'routeDetail' || appView === 'addBeta') { setAppView('routes'); setSelectedRouteId(null); }
         else if (appView === 'routes') { setAppView('dashboard'); setInitialSearchTerm(undefined); }
-        else if (appView === 'log') { setAppView(previousAppView); }
+        else if (appView === 'log' || appView === 'settings') { setAppView(previousAppView); } // Go back from log or settings
         else if (appView === 'profile' || appView === 'discover') { setAppView('dashboard'); }
         else if (appView === 'onboarding' && onboardingStep === 'gymSelection') { setOnboardingStep('auth'); }
         else if (appView === 'onboarding' && onboardingStep === 'gymSelection' && isAuthenticated && userMetadata?.selected_gym_ids && userMetadata.selected_gym_ids.length > 0) { setAppView('dashboard'); setOnboardingStep('complete'); }
+        else { setAppView('dashboard'); } // Default back to dashboard
       };
 
       const handleBetaSubmitted = () => { setAppView('routeDetail'); /* TODO: Refetch beta? */ };
@@ -334,6 +340,9 @@ import React, { useState, useEffect, useCallback } from 'react';
               break;
             case 'discover': currentScreen = <DiscoverScreen />; break;
             case 'profile': currentScreen = <ProfileScreen currentUser={currentUser} userMetadata={userMetadata} onNavigate={handleNavigate} onLogout={handleLogout} getGymNameById={getGymNameById} />; break;
+            case 'settings': // Add case for settings
+              currentScreen = <SettingsScreen currentUser={currentUser} userMetadata={userMetadata} onNavigate={handleNavigate} onLogout={handleLogout} onNavigateToGymSelection={handleNavigateToGymSelection} onBack={handleBack} />;
+              break;
             default: setAppView('dashboard'); currentScreen = <DashboardScreen currentUser={currentUser} selectedGyms={selectedGymIds} activeGymId={activeGymId} onSwitchGym={handleSwitchGym} getGymNameById={getGymNameById} onNavigateToGymSelection={handleNavigateToGymSelection} onNavigate={handleNavigate} />;
           }
           return ( <div className="font-sans"> <div className={showNavBar ? "pb-16" : ""}> {currentScreen} </div> {navBar} </div> );
