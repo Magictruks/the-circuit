@@ -1,7 +1,7 @@
 import React from 'react';
     import {
       CheckCircle, Circle, HelpCircle, MessageSquare, FileText, Bookmark,
-      MapPin, User as SetterIcon, CalendarDays
+      MapPin, User as SetterIcon, CalendarDays, Star
     } from 'lucide-react';
     import { RouteData } from '../../types';
 
@@ -25,7 +25,7 @@ import React from 'react';
       // Destructure all relevant fields, including the new status flags
       const {
         name, grade, grade_color, location, setter, date_set,
-        status, hasBeta, hasComments, hasNotes, isOnWishlist
+        status, hasBeta, hasComments, hasNotes, isOnWishlist, rating
       } = route;
 
       const iconSize = 16; // Consistent icon size
@@ -43,7 +43,17 @@ import React from 'react';
 
           {/* Route Details */}
           <div className="flex-grow overflow-hidden">
-            <h3 className="text-lg font-semibold text-brand-gray truncate">{name}</h3>
+            <div className={`flex flex-row gap-x-2`}>
+							<h3 className="text-lg font-semibold text-brand-gray truncate">{name}</h3>
+							<div className={`flex flex-row items-center align-center ${iconSpacing}`}>
+										{/* Row 2: Additional Info Icons */}
+										<div className={`flex ${iconSpacing} h-5`}>
+											{isOnWishlist && <Bookmark size={iconSize} className="text-accent-yellow" fill="currentColor" title="On Wishlist" />}
+											{rating && <Star size={iconSize} className={ 'text-accent-yellow'} fill={'currentColor'} />}
+											
+										</div>
+							</div>
+						</div>
             <div className="flex items-center text-sm text-gray-600 mt-1 gap-x-3 gap-y-1 flex-wrap">
               <span className="flex items-center gap-1"><MapPin size={14} /> {location}</span>
               {setter && <span className="flex items-center gap-1"><SetterIcon size={14} /> {setter}</span>}
@@ -59,8 +69,8 @@ import React from 'react';
             <div className={`flex ${iconSpacing} h-5`}> {/* Reserve space */}
               {hasBeta && <HelpCircle size={iconSize} className="text-blue-500" title="Beta Available" />}
               {hasComments && <MessageSquare size={iconSize} className="text-indigo-500" title="Comments Available" />}
-              {hasNotes && <FileText size={iconSize} className="text-purple-500" title="You have notes" />}
-              {isOnWishlist && <Bookmark size={iconSize} className="text-accent-yellow" fill="currentColor" title="On Wishlist" />}
+              {/* {hasNotes && <FileText size={iconSize} className="text-purple-500" title="You have notes" />} */}
+              {/* {isOnWishlist && <Bookmark size={iconSize} className="text-accent-yellow" fill="currentColor" title="On Wishlist" />} */}
             </div>
 
 						{/* Row 1: Progress Status */}

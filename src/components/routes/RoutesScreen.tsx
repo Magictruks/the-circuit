@@ -150,12 +150,15 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
             status = 'attempted';
           }
 
+					console.log("progress notes", progress)
+
           return {
             ...route,
             status: status,
             hasBeta: betaCount > 0,
             hasComments: commentCount > 0,
             hasNotes: !!progress?.notes && progress.notes.trim().length > 0,
+						rating: progress?.rating,
             isOnWishlist: !!progress?.wishlist,
           };
         });
