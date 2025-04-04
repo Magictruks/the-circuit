@@ -36,7 +36,7 @@ export interface UserMetadata {
   display_name: string;
   selected_gym_ids: string[]; // Array of gym UUIDs
   current_gym_id: string | null; // UUID of the currently active gym
-  avatar_url?: string | null; // Optional avatar URL
+  avatar_url?: string | null; // Optional avatar URL - ADDED
   created_at: string; // ISO 8601 timestamp
   updated_at: string; // ISO 8601 timestamp
 }
@@ -81,7 +81,7 @@ export interface BetaContent {
 
   // Optional fields (to be populated by joining/fetching profile data later)
   display_name?: string; // User's display name
-  avatar_url?: string | null; // User's avatar URL
+  avatar_url?: string | null; // User's avatar URL - ADDED (ensure consistency)
 }
 
 
@@ -96,7 +96,7 @@ export interface Comment {
 
   // Optional fields (to be populated by joining/fetching profile data later)
   display_name?: string; // User's display name
-  avatar_url?: string | null; // User's avatar URL
+  avatar_url?: string | null; // User's avatar URL - ADDED (ensure consistency)
 }
 
 // --- Activity Log ---
@@ -126,10 +126,18 @@ export interface ActivityLogEntry {
 
   // Joined data for display
   user_display_name?: string;
-  user_avatar_url?: string | null;
+  user_avatar_url?: string | null; // Already present, ensure consistency
   route_name?: string; // Can override details if joined
   route_grade?: string; // Can override details if joined
   gym_name?: string; // Can override details if joined
+}
+
+// --- Stats ---
+// Updated QuickStatsData to replace wishlistCount with betaAddedThisMonth
+export interface QuickStatsData {
+    sendsThisMonth: number;
+    highestGradeSent: string | null;
+    betaAddedThisMonth: number; // Replaced wishlistCount
 }
 
 
@@ -150,4 +158,5 @@ export type AppView =
 // Explicitly define UserProfile based on UserMetadata which matches 'profiles' table
 export interface UserProfile extends UserMetadata {
   // Inherits fields from UserMetadata which should match 'profiles'
+  // avatar_url is now inherited from UserMetadata
 }
