@@ -334,9 +334,9 @@ import React, { useState, useEffect, useCallback } from 'react';
       // --- End Loading and Error Handling ---
 
       // Destructure route data, including location_name
-      const { id: routeId, name, grade, grade_color, location, location_name, setter, date_set, description, image_url } = route;
+      const { id: routeId, name, grade, grade_color, location_name, setter, date_set, description, image_url } = route; // Removed 'location'
       // Determine display location
-      const displayLocation = location_name || location; // Prefer new name, fallback to old text
+      const displayLocation = location_name || 'Unknown Location'; // Use location_name or a default
       // Filter beta based on the active tab *after* fetching
       const filteredBeta = betaItems.filter(beta => beta.beta_type === activeBetaTab);
 

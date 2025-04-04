@@ -24,7 +24,7 @@ import React from 'react';
     const RouteCard: React.FC<RouteCardProps> = ({ route, onClick }) => {
       // Destructure all relevant fields, including location_name
       const {
-        name, grade, grade_color, location, location_name, setter, date_set, // Added location_name
+        name, grade, grade_color, location_name, setter, date_set, // Use location_name
         status, hasBeta, hasComments, hasNotes, isOnWishlist, rating
       } = route;
 
@@ -32,7 +32,7 @@ import React from 'react';
       const iconSpacing = "gap-1.5"; // Spacing between icons
 
       // Determine which location string to display
-      const displayLocation = location_name || location; // Prefer new name, fallback to old text
+      const displayLocation = location_name || 'Unknown Location'; // Use location_name or a default
 
       return (
         <div

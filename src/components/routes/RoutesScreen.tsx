@@ -189,14 +189,13 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
         // Apply filters
         let currentRoutes = augmentedRoutes;
 
-        // Search Term Filter
+        // Search Term Filter (Removed old 'location' field from search)
         if (searchTerm) {
           const lowerSearchTerm = searchTerm.toLowerCase();
           currentRoutes = currentRoutes.filter(route =>
             (route.name?.toLowerCase() || '').includes(lowerSearchTerm) ||
             (route.grade?.toLowerCase() || '').includes(lowerSearchTerm) ||
-            (route.location_name?.toLowerCase() || '').includes(lowerSearchTerm) || // Search by location name
-            (route.location?.toLowerCase() || '').includes(lowerSearchTerm) // Also search old location text
+            (route.location_name?.toLowerCase() || '').includes(lowerSearchTerm) // Search by location name only
           );
         }
 

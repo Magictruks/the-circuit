@@ -76,10 +76,10 @@ import React, { useState, useEffect, useCallback } from 'react';
             .select(`
               attempts, sent_at, rating, notes, wishlist, updated_at,
               route:routes!inner(
-                id, gym_id, name, grade, grade_color, location, date_set,
+                id, gym_id, name, grade, grade_color, date_set, location_id,
                 location_name:locations ( name )
               )
-            `)
+            `) // Removed routes.location
             .eq('user_id', currentUser.id)
             .or('sent_at.not.is.null,attempts.gt.0')
             .order('updated_at', { ascending: false });
@@ -127,10 +127,10 @@ import React, { useState, useEffect, useCallback } from 'react';
             .from('user_route_progress')
             .select(`
               route:routes!inner(
-                id, gym_id, name, grade, grade_color, location, date_set,
+                id, gym_id, name, grade, grade_color, date_set, location_id,
                 location_name:locations ( name )
               )
-            `)
+            `) // Removed routes.location
             .eq('user_id', currentUser.id)
             .eq('wishlist', true)
             .order('created_at', { referencedTable: 'routes', ascending: false });
@@ -246,7 +246,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 
       // --- Rendering Functions ---
       const renderLogbookItem = (entry: LogbookEntry) => {
-        const displayLocation = entry.location_name || entry.location; // Prefer new name
+        const displayLocation = entry.location_name || 'Unknown Location'; // Use location_name or a default
         return (
           <div key={entry.id} onClick={() => onNavigate('routeDetail', { routeId: entry.id })} className="flex items-center gap-3 p-3 border-b last:border-b-0 hover:bg-gray-50 cursor-pointer">
             <div className={`w-8 h-8 ${getGradeColorClass(entry.grade_color)} rounded-full flex items-center justify-center text-white font-bold text-xs flex-shrink-0`}>
@@ -269,7 +269,7 @@ import React, { useState, useEffect, useCallback } from 'react';
       };
 
       const renderWishlistItem = (route: RouteData) => {
-         const displayLocation = route.location_name || route.location; // Prefer new name
+         const displayLocation = route.location_name || 'Unknown Location'; // Use location_name or a default
          return (
             <div key={route.id} onClick={() => onNavigate('routeDetail', { routeId: route.id })} className="flex items-center gap-3 p-3 border-b last:border-b-0 hover:bg-gray-50 cursor-pointer">
                <div className={`w-8 h-8 ${getGradeColorClass(route.grade_color)} rounded-full flex items-center justify-center text-white font-bold text-xs flex-shrink-0`}>
