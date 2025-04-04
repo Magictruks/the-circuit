@@ -251,7 +251,34 @@ const RouteDetailScreen: React.FC<RouteDetailScreenProps> = ({ currentUser, rout
 
   // --- Handlers for user interactions (Progress) ---
   const handleLogAttempt = () => { const newAttempts = progress.attempts + 1; setProgress(prev => ({ ...prev, attempts: newAttempts })); saveProgress({ attempts: newAttempts }); };
-  const handleLogSend = () => { if (progress.sentDate) return; const now = new Date().toISOString(); const newAttempts = progress.attempts < 1 ? 1 : progress.attempts; setProgress(prev => ({ ...prev, sentDate: now, attempts: newAttempts })); saveProgress({ sent_at: now, attempts: newAttempts }); };
+  const handleLogSend = async (currentUser, route ) => {
+      console.log("Sending log...");
+      console.log('Progress before send:', progress);
+      if (progress.sentDate) return;
+      const now = new Date().toISOString();
+      const newAttempts = progress.attempts < 1 ? 1 : progress.attempts;
+      setProgress(prev => ({ ...prev, sentDate: now, attempts: newAttempts }));
+      saveProgress({ sent_at: now, attempts: newAttempts });
+      console.log("Progress after send:", { ...progress, sentDate: now });
+
+      // Log activity after successful send insertion
+        const activityDetails: ActivityLogDetails = {
+            route_name: route.name,
+            route_grade: route.grade,
+            attempts: newAttempts,
+        };
+        const { error: logError } = await supabase.from('activity_log').insert({
+            user_id: currentUser.id,
+            gym_id: route.gym_id,
+            route_id: route.id,
+            activity_type: 'log_send',
+            details: activityDetails,
+        });
+
+        if (logError) console.error('Error logging add_send activity:', logError);
+        console.log("Activity logged successfully.");
+
+  };
   const handleRating = (newRating: number) => { const finalRating = progress.rating === newRating ? null : newRating; setProgress(prev => ({ ...prev, rating: finalRating })); saveProgress({ rating: finalRating }); };
   const handleWishlistToggle = () => { const newWishlist = !progress.wishlist; setProgress(prev => ({ ...prev, wishlist: newWishlist })); saveProgress({ wishlist: newWishlist }); };
   const handleNotesChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => { setProgress(prev => ({ ...prev, notes: e.target.value })); };
@@ -346,7 +373,7 @@ const RouteDetailScreen: React.FC<RouteDetailScreenProps> = ({ currentUser, rout
            <h2 className="text-lg font-semibold text-brand-gray mb-3">Your Progress</h2>
            {progressError && <p className="text-red-500 text-sm mb-3 text-center">{progressError}</p>}
            <fieldset disabled={isLoadingProgress || isSavingProgress} className="space-y-4">
-             <div className="flex gap-2"> <button onClick={handleLogAttempt} className="flex-1 bg-orange-100 text-orange-600 hover:bg-orange-200 font-medium py-2 px-3 rounded text-sm text-center disabled:opacity-50 disabled:cursor-not-allowed">Log Attempt ({progress.attempts})</button> <button onClick={handleLogSend} disabled={!!progress.sentDate} className={`flex-1 font-medium py-2 px-3 rounded text-sm text-center ${progress.sentDate ? 'bg-green-200 text-green-700 cursor-not-allowed' : 'bg-green-500 text-white hover:bg-green-600'} disabled:opacity-50 disabled:cursor-not-allowed`}> {progress.sentDate ? `Sent ${new Date(progress.sentDate).toLocaleDateString()}` : 'Log Send'} </button> </div>
+             <div className="flex gap-2"> <button onClick={handleLogAttempt} className="flex-1 bg-orange-100 text-orange-600 hover:bg-orange-200 font-medium py-2 px-3 rounded text-sm text-center disabled:opacity-50 disabled:cursor-not-allowed">Log Attempt ({progress.attempts})</button> <button onClick={() => handleLogSend(currentUser, route)} disabled={!!progress.sentDate} className={`flex-1 font-medium py-2 px-3 rounded text-sm text-center ${progress.sentDate ? 'bg-green-200 text-green-700 cursor-not-allowed' : 'bg-green-500 text-white hover:bg-green-600'} disabled:opacity-50 disabled:cursor-not-allowed`}> {progress.sentDate ? `Sent ${new Date(progress.sentDate).toLocaleDateString()}` : 'Log Send'} </button> </div>
              <div> <label className="block text-sm font-medium text-brand-gray mb-1">Your Rating</label> <div className="flex gap-1">{[1, 2, 3, 4, 5].map(star => (<button key={star} onClick={() => handleRating(star)}><Star size={24} className={star <= (progress.rating || 0) ? 'text-accent-yellow' : 'text-gray-300'} fill={star <= (progress.rating || 0) ? 'currentColor' : 'none'} /></button>))}</div> </div>
              <div> <label htmlFor="personalNotes" className="block text-sm font-medium text-brand-gray mb-1">Private Notes</label> <textarea id="personalNotes" rows={3} value={progress.notes} onChange={handleNotesChange} onBlur={handleNotesBlur} placeholder="Add your personal beta, reminders, etc." className="w-full p-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-accent-blue disabled:bg-gray-100" /> </div>
            </fieldset>
