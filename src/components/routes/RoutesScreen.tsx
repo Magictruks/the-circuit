@@ -9,12 +9,25 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
       activeGymId: string | null;
       activeGymName: string;
       onNavigate: (view: AppView, data?: string | { routeId?: string; searchTerm?: string }) => void;
-      initialSearchTerm?: string; // This prop triggers the focus
+      initialSearchTerm?: string;
       currentUser: User | null;
     }
 
-    // Helper type for count results from RPC
     type CountResult = { route_id: string; count: number };
+    type RouteStatusFilter = 'all' | 'sent' | 'attempted' | 'unseen' | 'wishlist';
+    type SortOption = 'date_newest' | 'grade_hardest' | 'grade_easiest' | 'rating_highest';
+
+    // Helper to get numeric value for V-grades (consider moving to utils)
+    const getVGradeValue = (grade: string): number => {
+        if (grade && grade.toUpperCase().startsWith('V')) {
+            const numPart = grade.substring(1);
+            const rangeParts = numPart.split('-');
+            const numericValue = parseInt(rangeParts[rangeParts.length - 1], 10);
+            return isNaN(numericValue) ? -1 : numericValue;
+        }
+        return -1; // Return -1 for non-V grades or parsing errors
+    };
+
 
     const RoutesScreen: React.FC<RoutesScreenProps> = ({
       activeGymId,
@@ -32,43 +45,29 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
       const [gymLocations, setGymLocations] = useState<LocationData[]>([]);
       const [loading, setLoading] = useState(false);
       const [error, setError] = useState<string | null>(null);
+
+      // Filter States
       const [selectedLocationFilter, setSelectedLocationFilter] = useState<string>('');
+      const [selectedGradeFilter, setSelectedGradeFilter] = useState<string>('');
+      const [selectedStatusFilter, setSelectedStatusFilter] = useState<RouteStatusFilter>('all');
+      const [selectedSortOption, setSelectedSortOption] = useState<SortOption>('date_newest');
 
-      // Ref for the search input
       const searchInputRef = useRef<HTMLInputElement>(null);
-      const [didFocusOnMount, setDidFocusOnMount] = useState(false); // Track focus state
+      const [didFocusOnMount, setDidFocusOnMount] = useState(false);
 
-      // Update searchTerm state if initialSearchTerm prop changes
       useEffect(() => {
         setSearchTerm(initialSearchTerm || '');
-        // Reset focus tracking if the initial term is cleared (navigating back without search)
-        if (!initialSearchTerm) {
-            setDidFocusOnMount(false);
-        }
+        if (!initialSearchTerm) { setDidFocusOnMount(false); }
       }, [initialSearchTerm]);
 
-      // Effect to focus the input when initialSearchTerm is provided on mount/navigation
       useEffect(() => {
-        // Only focus if initialSearchTerm is present AND we haven't focused yet for this term
         if (initialSearchTerm && !didFocusOnMount) {
-          console.log('[RoutesScreen Autofocus] initialSearchTerm detected:', initialSearchTerm);
-          // Use setTimeout to ensure the input is rendered and ready
-          // Increased delay from 100ms to 250ms
           setTimeout(() => {
-            console.log('[RoutesScreen Autofocus] Attempting focus. Ref current:', searchInputRef.current);
-            if (searchInputRef.current) {
-                searchInputRef.current.focus();
-                console.log('[RoutesScreen Autofocus] Focus called.');
-                setDidFocusOnMount(true); // Mark as focused for this initial term
-            } else {
-                console.log('[RoutesScreen Autofocus] Ref not available yet.');
-            }
-          }, 250); // Increased delay
+            if (searchInputRef.current) { searchInputRef.current.focus(); setDidFocusOnMount(true); }
+          }, 250);
         }
-      }, [initialSearchTerm, didFocusOnMount]); // Depend on term and focus state
+      }, [initialSearchTerm, didFocusOnMount]);
 
-
-      // Fetch all data when activeGymId or currentUser changes
       useEffect(() => {
         const fetchAllRouteData = async () => {
           if (!activeGymId) {
@@ -128,8 +127,20 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
         fetchAllRouteData();
       }, [activeGymId, currentUser]);
 
-      // Memoize augmented and filtered routes
-      const augmentedAndFilteredRoutes = useMemo(() => {
+      // Get unique grades for the filter dropdown
+      const availableGrades = useMemo(() => {
+        const grades = new Set(baseRoutes.map(r => r.grade).filter(Boolean));
+        return Array.from(grades).sort((a, b) => {
+            const valA = getVGradeValue(a);
+            const valB = getVGradeValue(b);
+            if (valA !== -1 && valB !== -1) return valA - valB; // Sort V-grades numerically
+            return a.localeCompare(b); // Fallback to string sort
+        });
+      }, [baseRoutes]);
+
+      // Memoize augmented, filtered, and sorted routes
+      const augmentedFilteredAndSortedRoutes = useMemo(() => {
+        // 1. Augment routes with progress, beta, comments, etc.
         const augmentedRoutes = baseRoutes.map(route => {
           const progress = userProgressMap.get(route.id);
           const betaCount = betaCountsMap.get(route.id) || 0;
@@ -137,23 +148,68 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
           let status: 'sent' | 'attempted' | 'unseen' = 'unseen';
           if (progress?.sent_at) status = 'sent';
           else if (progress?.attempts && progress.attempts > 0) status = 'attempted';
-          return { ...route, status, hasBeta: betaCount > 0, hasComments: commentCount > 0, hasNotes: !!progress?.notes && progress.notes.trim().length > 0, rating: progress?.rating, isOnWishlist: !!progress?.wishlist };
+          return {
+            ...route,
+            status,
+            hasBeta: betaCount > 0,
+            hasComments: commentCount > 0,
+            hasNotes: !!progress?.notes && progress.notes.trim().length > 0,
+            rating: progress?.rating,
+            isOnWishlist: !!progress?.wishlist
+          };
         });
 
-        let currentRoutes = augmentedRoutes;
+        // 2. Filter routes
+        let filteredRoutes = augmentedRoutes;
+        // Search Term Filter
         if (searchTerm) {
           const lowerSearchTerm = searchTerm.toLowerCase();
-          currentRoutes = currentRoutes.filter(route =>
+          filteredRoutes = filteredRoutes.filter(route =>
             (route.name?.toLowerCase() || '').includes(lowerSearchTerm) ||
             (route.grade?.toLowerCase() || '').includes(lowerSearchTerm) ||
             (route.location_name?.toLowerCase() || '').includes(lowerSearchTerm)
           );
         }
+        // Location Filter
         if (selectedLocationFilter) {
-          currentRoutes = currentRoutes.filter(route => route.location_id === selectedLocationFilter);
+          filteredRoutes = filteredRoutes.filter(route => route.location_id === selectedLocationFilter);
         }
-        return currentRoutes;
-      }, [baseRoutes, userProgressMap, betaCountsMap, commentCountsMap, searchTerm, selectedLocationFilter]);
+        // Grade Filter
+        if (selectedGradeFilter) {
+          filteredRoutes = filteredRoutes.filter(route => route.grade === selectedGradeFilter);
+        }
+        // Status Filter
+        if (selectedStatusFilter !== 'all') {
+          filteredRoutes = filteredRoutes.filter(route => {
+            if (selectedStatusFilter === 'wishlist') return route.isOnWishlist;
+            return route.status === selectedStatusFilter;
+          });
+        }
+
+        // 3. Sort routes
+        const sortedRoutes = [...filteredRoutes].sort((a, b) => {
+          switch (selectedSortOption) {
+            case 'grade_hardest':
+              return getVGradeValue(b.grade) - getVGradeValue(a.grade);
+            case 'grade_easiest':
+              return getVGradeValue(a.grade) - getVGradeValue(b.grade);
+            case 'rating_highest':
+              // Sort by rating (desc), put nulls last
+              const ratingA = a.rating ?? -1;
+              const ratingB = b.rating ?? -1;
+              return ratingB - ratingA;
+            case 'date_newest':
+            default:
+              // Already fetched newest first, but explicit sort is safer
+              return new Date(b.date_set).getTime() - new Date(a.date_set).getTime();
+          }
+        });
+
+        return sortedRoutes;
+      }, [
+        baseRoutes, userProgressMap, betaCountsMap, commentCountsMap,
+        searchTerm, selectedLocationFilter, selectedGradeFilter, selectedStatusFilter, selectedSortOption
+      ]);
 
       // --- Render Logic ---
       if (!activeGymId && !loading) { return <div className="p-4 pt-16 text-center text-brand-gray">Please select a gym first.</div>; }
@@ -167,7 +223,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
               {/* Search Bar */}
               <div className="relative flex-grow">
                 <input
-                  ref={searchInputRef} // Assign the ref here
+                  ref={searchInputRef}
                   type="text"
                   placeholder="Search routes by name, grade, location..."
                   value={searchTerm}
@@ -186,7 +242,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
             <div className="bg-white p-4 border-b border-gray-200 shadow-sm">
               <h3 className="text-sm font-semibold mb-2 text-brand-gray">Filter & Sort</h3>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
-                {/* Location Filter Dropdown */}
+                {/* Location Filter */}
                 <div className="relative">
                   <select value={selectedLocationFilter} onChange={(e) => setSelectedLocationFilter(e.target.value)} className="w-full appearance-none bg-gray-50 border border-gray-300 rounded p-2 pr-8 text-brand-gray hover:border-gray-400 focus:outline-none focus:ring-1 focus:ring-accent-blue">
                     <option value="">All Locations</option>
@@ -194,10 +250,35 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
                   </select>
                   <ChevronDown size={16} className="absolute right-2.5 top-1/2 transform -translate-y-1/2 text-gray-400 pointer-events-none" />
                 </div>
-                {/* Placeholder Filter Dropdowns/Buttons */}
-                <button className="flex justify-between items-center p-2 border rounded bg-gray-50 text-brand-gray hover:border-gray-400">Grade <ChevronDown size={16}/></button>
-                <button className="flex justify-between items-center p-2 border rounded bg-gray-50 text-brand-gray hover:border-gray-400">Status <ChevronDown size={16}/></button>
-                <button className="flex justify-between items-center p-2 border rounded bg-gray-50 text-brand-gray hover:border-gray-400">Sort By <ChevronDown size={16}/></button>
+                {/* Grade Filter */}
+                <div className="relative">
+                  <select value={selectedGradeFilter} onChange={(e) => setSelectedGradeFilter(e.target.value)} className="w-full appearance-none bg-gray-50 border border-gray-300 rounded p-2 pr-8 text-brand-gray hover:border-gray-400 focus:outline-none focus:ring-1 focus:ring-accent-blue">
+                    <option value="">All Grades</option>
+                    {availableGrades.map(grade => ( <option key={grade} value={grade}>{grade}</option> ))}
+                  </select>
+                  <ChevronDown size={16} className="absolute right-2.5 top-1/2 transform -translate-y-1/2 text-gray-400 pointer-events-none" />
+                </div>
+                {/* Status Filter */}
+                <div className="relative">
+                  <select value={selectedStatusFilter} onChange={(e) => setSelectedStatusFilter(e.target.value as RouteStatusFilter)} className="w-full appearance-none bg-gray-50 border border-gray-300 rounded p-2 pr-8 text-brand-gray hover:border-gray-400 focus:outline-none focus:ring-1 focus:ring-accent-blue">
+                    <option value="all">All Statuses</option>
+                    <option value="sent">Sent</option>
+                    <option value="attempted">Attempted</option>
+                    <option value="unseen">Unseen</option>
+                    <option value="wishlist">Wishlist</option>
+                  </select>
+                  <ChevronDown size={16} className="absolute right-2.5 top-1/2 transform -translate-y-1/2 text-gray-400 pointer-events-none" />
+                </div>
+                {/* Sort By */}
+                <div className="relative">
+                  <select value={selectedSortOption} onChange={(e) => setSelectedSortOption(e.target.value as SortOption)} className="w-full appearance-none bg-gray-50 border border-gray-300 rounded p-2 pr-8 text-brand-gray hover:border-gray-400 focus:outline-none focus:ring-1 focus:ring-accent-blue">
+                    <option value="date_newest">Sort: Newest</option>
+                    <option value="grade_hardest">Sort: Grade (Hardest)</option>
+                    <option value="grade_easiest">Sort: Grade (Easiest)</option>
+                    <option value="rating_highest">Sort: Your Rating</option>
+                  </select>
+                  <ChevronDown size={16} className="absolute right-2.5 top-1/2 transform -translate-y-1/2 text-gray-400 pointer-events-none" />
+                </div>
               </div>
             </div>
           )}
@@ -206,7 +287,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
           <main className="flex-grow p-4 space-y-3 overflow-y-auto pb-20">
             {loading ? ( <div className="flex justify-center items-center pt-10"> <Loader2 className="animate-spin text-accent-blue mr-2" size={24} /> <p className="text-brand-gray">Loading routes...</p> </div>
             ) : error ? ( <p className="text-center text-red-500 mt-8">{error}</p>
-            ) : augmentedAndFilteredRoutes.length > 0 ? ( augmentedAndFilteredRoutes.map(route => ( <RouteCard key={route.id} route={route} onClick={() => onNavigate('routeDetail', { routeId: route.id })} /> ))
+            ) : augmentedFilteredAndSortedRoutes.length > 0 ? ( augmentedFilteredAndSortedRoutes.map(route => ( <RouteCard key={route.id} route={route} onClick={() => onNavigate('routeDetail', { routeId: route.id })} /> ))
             ) : ( <p className="text-center text-gray-500 mt-8"> {baseRoutes.length === 0 ? 'No routes found for this gym yet.' : 'No routes found matching your criteria.'} </p> )}
           </main>
         </div>
