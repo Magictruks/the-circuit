@@ -65,17 +65,19 @@ import type { User } from '@supabase/supabase-js';
       user_id: string;
       route_id: string;
       attempts: number;
-      sent_at: string | null;
+      sent_at: string | null; // ISO string or null
       rating: number | null;
       notes: string | null; // Notes can be null in the DB
       wishlist: boolean;
-      updated_at: string;
+      updated_at?: string; // Optional, managed by DB
+      created_at?: string; // Optional, managed by DB
     }
 
     // Simplified version for internal use within components if needed
+    // Renamed sent_at to sentDate for clarity in component state
     export interface UserProgress {
       attempts: number;
-      sent_at: string | null; // ISO 8601 date string if sent
+      sentDate: string | null; // ISO 8601 date string if sent
       rating: number | null; // User's personal rating (e.g., 1-5 stars)
       notes: string; // Private notes about the climb (ensure non-null string)
       wishlist: boolean; // Is the route on the user's wishlist?
@@ -88,7 +90,7 @@ import type { User } from '@supabase/supabase-js';
       user_progress_attempts: number;
       user_progress_sent_at: string | null;
       user_progress_rating: number | null;
-      user_progress_notes: string;
+      user_progress_notes: string | null; // Allow null here to match DB
       user_progress_wishlist: boolean;
       user_progress_updated_at: string; // Add updated_at from progress table for sorting
     }
@@ -136,7 +138,7 @@ import type { User } from '@supabase/supabase-js';
       // Common optional fields
       route_name?: string;
       route_grade?: string;
-      gym_name?: string;
+      gym_name?: string; // Optional: Can be derived if needed
       route_grade_color?: string; // ADDED
       location_name?: string | null; // ADDED: Location name for context (can be null)
 

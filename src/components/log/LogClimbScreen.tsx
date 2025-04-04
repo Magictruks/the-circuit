@@ -1,25 +1,37 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import { ArrowLeft, Check, Circle, Star, ChevronDown, Search, Loader2 } from 'lucide-react';
-import { RouteData, ActivityLogDetails } from '../../types';
-import { supabase } from '../../supabaseClient'; // Import supabase
-import type { User } from '@supabase/supabase-js'; // Import User type
+import { RouteData, ActivityLogDetails, UserRouteProgressData } from '../../types'; // Added UserRouteProgressData
+import { supabase } from '../../supabaseClient';
+import type { User } from '@supabase/supabase-js';
 
 interface LogClimbScreenProps {
-  currentUser: User | null; // Add currentUser
-  activeGymId: string | null; // Add activeGymId
-  availableRoutes: RouteData[]; // All routes for selection (can be filtered later)
+  currentUser: User | null;
+  activeGymId: string | null; // Keep for context, though route.gym_id is primary
+  availableRoutes: RouteData[];
   onBack: () => void;
   onSubmitSuccess: () => void;
 }
 
 type LogType = 'send' | 'attempt';
 
+// Helper function (can be moved to utils if needed)
+const getGradeColorClass = (colorName: string | undefined): string => {
+  if (!colorName) return 'bg-gray-400';
+  const colorMap: { [key: string]: string } = {
+    'accent-red': 'bg-accent-red', 'accent-blue': 'bg-accent-blue', 'accent-yellow': 'bg-accent-yellow',
+    'brand-green': 'bg-brand-green', 'accent-purple': 'bg-accent-purple', 'brand-gray': 'bg-brand-gray',
+    'brand-brown': 'bg-brand-brown',
+  };
+  return colorMap[colorName] || colorMap[colorName.replace('_', '-')] || 'bg-gray-400';
+};
+
+
 const LogClimbScreen: React.FC<LogClimbScreenProps> = ({ currentUser, activeGymId, availableRoutes, onBack, onSubmitSuccess }) => {
   const [selectedRouteId, setSelectedRouteId] = useState<string>('');
   const [logType, setLogType] = useState<LogType>('send');
   const [attempts, setAttempts] = useState<number>(1);
-  const [date, setDate] = useState<string>(new Date().toISOString().split('T')[0]); // Default to today YYYY-MM-DD
-  const [rating, setRating] = useState<number | null>(null); // Optional rating
+  const [date, setDate] = useState<string>(new Date().toISOString().split('T')[0]); // YYYY-MM-DD
+  const [rating, setRating] = useState<number | null>(null);
   const [notes, setNotes] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -31,22 +43,24 @@ const LogClimbScreen: React.FC<LogClimbScreenProps> = ({ currentUser, activeGymI
   }, [selectedRouteId, availableRoutes]);
 
   const filteredRoutes = useMemo(() => {
-    if (!routeSearchTerm) return availableRoutes; // Show all if no search term
+    if (!routeSearchTerm) return availableRoutes;
     return availableRoutes.filter(route =>
-      route.name.toLowerCase().includes(routeSearchTerm.toLowerCase()) ||
-      route.grade.toLowerCase().includes(routeSearchTerm.toLowerCase())
+      (route.name?.toLowerCase() || '').includes(routeSearchTerm.toLowerCase()) ||
+      (route.grade?.toLowerCase() || '').includes(routeSearchTerm.toLowerCase()) ||
+      (route.location_name?.toLowerCase() || '').includes(routeSearchTerm.toLowerCase()) // Search location_name
     );
   }, [routeSearchTerm, availableRoutes]);
 
   const handleRouteSelect = (routeId: string) => {
     setSelectedRouteId(routeId);
-    setRouteSearchTerm(availableRoutes.find(r => r.id === routeId)?.name || ''); // Update search bar text
+    const route = availableRoutes.find(r => r.id === routeId);
+    setRouteSearchTerm(route ? `${route.name} (${route.grade})` : ''); // Update search bar text
     setShowRouteDropdown(false);
   };
 
   // Function to log activity
-  const logActivity = async (type: 'log_send' | 'log_attempt', route: RouteData, details: ActivityLogDetails) => {
-    if (!currentUser) return; // Should not happen if submit is enabled
+  const logActivity = useCallback(async (type: 'log_send' | 'log_attempt', route: RouteData, details: ActivityLogDetails) => {
+    if (!currentUser) return;
 
     const { error: logError } = await supabase.from('activity_log').insert({
       user_id: currentUser.id,
@@ -58,66 +72,106 @@ const LogClimbScreen: React.FC<LogClimbScreenProps> = ({ currentUser, activeGymI
 
     if (logError) {
       console.error(`Error logging ${type} activity:`, logError);
-      // Non-critical error, don't block the user, maybe log to monitoring
+      // Non-critical error, maybe log to monitoring
     } else {
       console.log(`${type} activity logged successfully.`);
     }
-  };
+  }, [currentUser]); // currentUser is a dependency
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
-    if (!currentUser) {
-      setError('You must be logged in to log climbs.');
-      return;
-    }
-    if (!selectedRouteId || !selectedRoute) {
-      setError('Please select a route.');
-      return;
-    }
+    if (!currentUser) { setError('You must be logged in to log climbs.'); return; }
+    if (!selectedRouteId || !selectedRoute) { setError('Please select a route.'); return; }
 
     setIsSubmitting(true);
 
-    // --- TODO: Implement Actual Log Submission Logic (e.g., save to user_route_progress) ---
-    // This part remains conceptual for now, focusing on activity logging
-    console.log('Submitting Climb Log (Conceptual):', {
-      userId: currentUser.id,
-      routeId: selectedRouteId,
-      gymId: selectedRoute.gym_id,
-      type: logType,
-      attempts: logType === 'send' ? attempts : undefined,
-      date: date,
-      rating: rating,
-      notes: notes,
-    });
+    try {
+      let progressSaveSuccess = false;
+      let finalAttempts = 1; // Default for new entries or sends
 
-    // Simulate API call for saving progress
-    await new Promise(resolve => setTimeout(resolve, 500));
-    const progressSaveSuccess = true; // Assume success for now
-    // --- End Conceptual Progress Save ---
+      // Fetch existing progress to handle attempts correctly
+      const { data: existingProgress, error: fetchError } = await supabase
+        .from('user_route_progress')
+        .select('attempts, sent_at, wishlist') // Select needed fields
+        .eq('user_id', currentUser.id)
+        .eq('route_id', selectedRouteId)
+        .maybeSingle();
 
-    if (progressSaveSuccess) {
-      // Log activity *after* successful progress save
-      const activityDetails: ActivityLogDetails = {
-        route_name: selectedRoute.name,
-        route_grade: selectedRoute.grade,
-        // Add attempts only for 'send' logs
-        ...(logType === 'send' && { attempts: attempts }),
+      if (fetchError) {
+        throw new Error(`Failed to check existing progress: ${fetchError.message}`);
+      }
+
+      const currentAttempts = existingProgress?.attempts ?? 0;
+      const isAlreadySent = !!existingProgress?.sent_at;
+      const currentWishlist = existingProgress?.wishlist ?? false; // Preserve wishlist status
+
+      let dataToUpsert: Partial<UserRouteProgressData> = {
+        user_id: currentUser.id,
+        route_id: selectedRouteId,
+        rating: rating,
+        notes: notes.trim() || null, // Store null if notes are empty
+        wishlist: currentWishlist, // Preserve wishlist status
       };
-      await logActivity(logType === 'send' ? 'log_send' : 'log_attempt', selectedRoute, activityDetails);
 
-      console.log('Log submitted successfully!');
-      onSubmitSuccess(); // Navigate back
-    } else {
-      // Handle potential API errors for saving progress here
-      setError("Failed to save log. Please try again.");
+      if (logType === 'send') {
+        // If logging a send, set sent_at and ensure attempts >= 1
+        finalAttempts = Math.max(1, attempts); // Use state 'attempts', ensure >= 1
+        dataToUpsert = {
+          ...dataToUpsert,
+          attempts: finalAttempts,
+          sent_at: new Date(date).toISOString(), // Use selected date
+        };
+      } else { // logType === 'attempt'
+        // If logging an attempt, increment attempts, keep sent_at null (unless already sent)
+        finalAttempts = currentAttempts + 1;
+        dataToUpsert = {
+          ...dataToUpsert,
+          attempts: finalAttempts,
+          // Only set sent_at if it was already set (don't unset a send by logging an attempt)
+          ...(isAlreadySent && { sent_at: existingProgress.sent_at }),
+        };
+      }
+
+      // Upsert the progress data
+      const { error: upsertError } = await supabase
+        .from('user_route_progress')
+        .upsert(dataToUpsert, { onConflict: 'user_id, route_id' });
+
+      if (upsertError) {
+        throw new Error(`Failed to save log: ${upsertError.message}`);
+      } else {
+        progressSaveSuccess = true;
+      }
+
+      // --- Post-Save Actions ---
+      if (progressSaveSuccess) {
+        // Log activity *after* successful progress save
+        const activityDetails: ActivityLogDetails = {
+          route_name: selectedRoute.name,
+          route_grade: selectedRoute.grade,
+          route_grade_color: selectedRoute.grade_color, // Add color
+          location_name: selectedRoute.location_name, // Add location name
+          // Add attempts only for 'send' logs
+          ...(logType === 'send' && { attempts: finalAttempts }),
+        };
+        await logActivity(logType === 'send' ? 'log_send' : 'log_attempt', selectedRoute, activityDetails);
+
+        console.log('Log submitted successfully!');
+        onSubmitSuccess(); // Navigate back
+      }
+
+    } catch (err: any) {
+      console.error("Error during log submission:", err);
+      setError(err.message || "An unexpected error occurred.");
+    } finally {
       setIsSubmitting(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-gray-100">
+    <div className="min-h-screen bg-gray-100 pb-10">
       {/* Header */}
       <header className="bg-white shadow-sm p-4 sticky top-0 z-10 flex items-center">
         <button onClick={onBack} className="mr-4 text-brand-gray hover:text-brand-green">
@@ -141,8 +195,9 @@ const LogClimbScreen: React.FC<LogClimbScreenProps> = ({ currentUser, activeGymI
                  value={routeSearchTerm}
                  onChange={(e) => { setRouteSearchTerm(e.target.value); setShowRouteDropdown(true); setSelectedRouteId(''); }}
                  onFocus={() => setShowRouteDropdown(true)}
-                 // onBlur={() => setTimeout(() => setShowRouteDropdown(false), 150)} // Delay hiding to allow click
+                 onBlur={() => setTimeout(() => setShowRouteDropdown(false), 150)} // Delay hiding to allow click
                  className="w-full py-2 pr-8 border-none focus:ring-0 text-sm"
+                 autoComplete="off"
                />
                <ChevronDown size={16} className={`absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 transition-transform ${showRouteDropdown ? 'rotate-180' : ''}`} />
             </div>
@@ -157,7 +212,7 @@ const LogClimbScreen: React.FC<LogClimbScreenProps> = ({ currentUser, activeGymI
                       className="block w-full text-left px-3 py-2 text-sm hover:bg-gray-100 truncate"
                     >
                       <span className={`inline-block w-3 h-3 rounded-full mr-2 ${getGradeColorClass(route.grade_color)}`}></span>
-                      {route.name} ({route.grade}) - {route.location}
+                      {route.name} ({route.grade}) - {route.location_name || 'Unknown Location'}
                     </button>
                   ))
                 ) : (
@@ -169,7 +224,7 @@ const LogClimbScreen: React.FC<LogClimbScreenProps> = ({ currentUser, activeGymI
            {/* Display selected route info */}
            {selectedRoute && !showRouteDropdown && (
              <div className="mt-1 text-xs text-gray-500 pl-2">
-               Selected: {selectedRoute.name} ({selectedRoute.grade}) - {selectedRoute.location}
+               Selected: {selectedRoute.name} ({selectedRoute.grade}) - {selectedRoute.location_name || 'Unknown Location'}
              </div>
            )}
         </section>
@@ -205,7 +260,7 @@ const LogClimbScreen: React.FC<LogClimbScreenProps> = ({ currentUser, activeGymI
           </div>
         </section>
 
-        {/* Attempts (Conditional) */}
+        {/* Attempts (Conditional for Send) */}
         {logType === 'send' && (
           <section>
             <label htmlFor="attempts" className="block text-sm font-medium text-brand-gray mb-1">Attempts for Send</label>
@@ -264,7 +319,7 @@ const LogClimbScreen: React.FC<LogClimbScreenProps> = ({ currentUser, activeGymI
         </section>
 
         {/* Error Message */}
-        {error && <p className="text-red-500 text-sm text-center">{error}</p>}
+        {error && <p className="text-red-500 text-sm text-center bg-red-100 p-2 rounded border border-red-300">{error}</p>}
 
         {/* Submit Button */}
         <button
@@ -286,17 +341,5 @@ const LogClimbScreen: React.FC<LogClimbScreenProps> = ({ currentUser, activeGymI
     </div>
   );
 };
-
-// Helper function (can be moved to utils if needed)
-const getGradeColorClass = (colorName: string | undefined): string => {
-  if (!colorName) return 'bg-gray-400';
-  const colorMap: { [key: string]: string } = {
-    'accent-red': 'bg-accent-red', 'accent-blue': 'bg-accent-blue', 'accent-yellow': 'bg-accent-yellow',
-    'brand-green': 'bg-brand-green', 'accent-purple': 'bg-accent-purple', 'brand-gray': 'bg-brand-gray',
-    'brand-brown': 'bg-brand-brown',
-  };
-  return colorMap[colorName] || colorMap[colorName.replace('_', '-')] || 'bg-gray-400';
-};
-
 
 export default LogClimbScreen;
