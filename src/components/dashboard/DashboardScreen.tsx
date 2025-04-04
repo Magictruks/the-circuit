@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
-    import { ChevronDown, Search, Bell, CheckCircle, Circle, HelpCircle, PlusCircle, Loader2, Route as RouteIcon, MessageSquare, Video as VideoIcon, PencilLine as DrawingIcon, AlertTriangle, MapPin } from 'lucide-react'; // Added MapPin
+import React, { useState, useEffect, useCallback, useRef } from 'react'; // Added useRef
+    import { ChevronDown, Search, Bell, CheckCircle, Circle, HelpCircle, PlusCircle, Loader2, Route as RouteIcon, MessageSquare, Video as VideoIcon, PencilLine as DrawingIcon, AlertTriangle, MapPin } from 'lucide-react';
     import { AppView, ActivityLogEntry, QuickStatsData } from '../../types';
     import { supabase } from '../../supabaseClient';
     import { User } from '@supabase/supabase-js';
@@ -72,7 +72,7 @@ import React, { useState, useEffect, useCallback } from 'react';
         onNavigate
     }) => {
         const [showGymSelector, setShowGymSelector] = useState(false);
-        const [searchTerm, setSearchTerm] = useState('');
+        const [searchTerm, setSearchTerm] = useState(''); // Keep state for temporary input
         const [activityLog, setActivityLog] = useState<ActivityLogEntry[]>([]);
         const [loadingActivity, setLoadingActivity] = useState(false);
         const [activityError, setActivityError] = useState<string | null>(null);
@@ -84,15 +84,18 @@ import React, { useState, useEffect, useCallback } from 'react';
 
         const handleGymSelect = (gymId: string) => { onSwitchGym(gymId); setShowGymSelector(false); };
         const handleChooseMoreGyms = () => { setShowGymSelector(false); onNavigateToGymSelection(); };
+        // Keep handleSearchChange to update the temporary search term
         const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => { setSearchTerm(event.target.value); };
-        const handleSearchSubmit = (event: React.FormEvent<HTMLFormElement>) => { event.preventDefault(); if (searchTerm.trim()) { onNavigate('routes', { searchTerm: searchTerm.trim() }); } };
+        // NEW: Handle click/tap on the search area
+        const handleSearchClick = () => {
+            onNavigate('routes', { searchTerm: searchTerm.trim() });
+        };
 
         // --- Fetch Activity Log ---
         const fetchActivityLog = useCallback(async () => {
             if (!activeGymId) { setActivityLog([]); setLoadingActivity(false); setActivityError(null); return; }
             setLoadingActivity(true); setActivityError(null);
             try {
-                // Join routes and then locations to get location_name
                 const { data, error } = await supabase
                     .from('activity_log')
                     .select(`
@@ -115,9 +118,8 @@ import React, { useState, useEffect, useCallback } from 'react';
                     else { setActivityError("Failed to load activity."); }
                     setActivityLog([]);
                 } else if (data) {
-                    // Map the data, including the location_name
                     const mappedLogs = data.map(log => {
-                        const routeInfo = log.route as any; // Cast for easier access
+                        const routeInfo = log.route as any;
                         const locationInfo = routeInfo?.location_info as any;
                         return {
                             ...log,
@@ -126,8 +128,8 @@ import React, { useState, useEffect, useCallback } from 'react';
                             route_name: routeInfo?.name || log.details?.route_name,
                             route_grade: routeInfo?.grade || log.details?.route_grade,
                             route_grade_color: routeInfo?.grade_color || log.details?.route_grade_color,
-                            location_name: locationInfo?.name || log.details?.location_name, // Get location name
-                            details: log.details, // Keep original details as fallback
+                            location_name: locationInfo?.name || log.details?.location_name,
+                            details: log.details,
                         };
                     });
                     setActivityLog(mappedLogs as ActivityLogEntry[]);
@@ -200,7 +202,7 @@ import React, { useState, useEffect, useCallback } from 'react';
             const routeName = log.route_name || log.details?.route_name || 'a route';
             const routeGrade = log.route_grade || log.details?.route_grade || 'N/A';
             const routeGradeColor = log.route_grade_color || log.details?.route_grade_color;
-            const locationName = log.location_name || log.details?.location_name; // Get location name
+            const locationName = log.location_name || log.details?.location_name;
             const textColorClass = getGradeTextColorClass(routeGradeColor);
 
             const routeDisplay = (
@@ -217,7 +219,6 @@ import React, { useState, useEffect, useCallback } from 'react';
                             {routeName} ({routeGrade})
                         </span>
                     )}
-                    {/* Display location if available */}
                     {locationName && <span className="text-gray-500 text-xs"> at {locationName}</span>}
                 </>
             );
@@ -278,7 +279,25 @@ import React, { useState, useEffect, useCallback } from 'react';
                         {showGymSelector && ( <div className="absolute top-full left-0 mt-2 w-60 bg-white rounded-md shadow-lg border z-20 max-h-60 overflow-y-auto"> {selectedGyms.length > 1 && selectedGyms.map(gymId => ( <button key={gymId} onClick={() => handleGymSelect(gymId)} className={`block w-full text-left px-4 py-2 text-sm truncate ${activeGymId === gymId ? 'bg-accent-blue/10 text-accent-blue font-semibold' : 'text-brand-gray hover:bg-gray-100'}`}> {getGymNameById(gymId)} </button> ))} {selectedGyms.length > 1 && <hr className="my-1 border-gray-200" />} <button onClick={handleChooseMoreGyms} className="flex items-center w-full text-left px-4 py-2 text-sm text-accent-blue hover:bg-accent-blue/10"> <PlusCircle size={16} className="mr-2" /> Choose more gyms... </button> </div> )}
                         <button className="text-brand-gray hover:text-brand-green"> <Bell size={24} /> </button>
                     </div>
-                    <form onSubmit={handleSearchSubmit} className="relative mt-4"> <input type="text" placeholder={`Search routes at ${activeGymName}...`} value={searchTerm} onChange={handleSearchChange} className="w-full px-4 py-2 pl-10 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent-blue bg-gray-100" /> <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} /> <button type="submit" className="hidden"></button> </form>
+                    {/* Search Area - Modified */}
+                    <div className="relative mt-4">
+                        {/* Hidden input to capture typing */}
+                        <input
+                            type="text"
+                            value={searchTerm}
+                            onChange={handleSearchChange}
+                            className="absolute inset-0 opacity-0 pointer-events-none" // Hide visually but allow typing
+                            aria-hidden="true"
+                         />
+                         {/* Clickable area styled as input */}
+                        <button
+                            onClick={handleSearchClick}
+                            className="w-full px-4 py-2 pl-10 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent-blue bg-gray-100 text-left flex items-center text-gray-500 hover:border-gray-400"
+                        >
+                            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
+                            {searchTerm || `Search routes at ${activeGymName}...`}
+                        </button>
+                    </div>
                 </header>
 
                 {/* Main Content Area */}
