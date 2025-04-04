@@ -51,7 +51,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
         return;
     }
 
-    const { error } = await supabase.auth.signUp({
+    const { data ,error } = await supabase.auth.signUp({
       email: email,
       password: password,
       options: {
@@ -68,6 +68,10 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
       setError(error.message);
     } else {
       console.log('Sign up successful! Display name added.');
+      if (data?.user?.id) {
+        // Optionally, you can insert the display name into a user profile table here
+        await supabase.from('profiles').update({ display_name: displayName.trim() }).eq('user_id', data.user.id);
+      }
       // For this app, we assume immediate success without email confirmation
       // TODO: Consider creating a user profile row in a separate 'profiles' table upon signup.
       onAuthSuccess(); // Proceed to next step on success

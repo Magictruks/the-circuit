@@ -167,11 +167,24 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ currentUser, userMetadata
     if (!trimmedName) { setEditError("Display name cannot be empty."); return; }
     if (trimmedName === currentDisplayName) { setIsEditing(false); return; }
     setIsSaving(true); setEditError(null);
-    const { error: authUpdateError } = await supabase.auth.updateUser({ data: { display_name: trimmedName } });
+
+    const response = await Promise.all([
+        supabase.from('profiles').update({ display_name: trimmedName }).eq('user_id', currentUser?.id),
+        supabase.auth.updateUser({ data: { display_name: trimmedName } })
+    ]);
+
+    const [profileUpdateResponse, authUpdateResponse] = response;
+    const { error: profileUpdateError } = profileUpdateResponse;
+    const { error: authUpdateError } = authUpdateResponse;
+    if (profileUpdateError) { console.error("Error updating profile:", profileUpdateError); setEditError(`Failed to update name: ${profileUpdateError.message}`); setIsSaving(false); return; }
     if (authUpdateError) { console.error("Error updating auth user metadata:", authUpdateError); setEditError(`Failed to update name: ${authUpdateError.message}`); setIsSaving(false); return; }
-    console.log("Auth metadata updated, trigger should sync user_metadata.");
-    setIsEditing(false); setIsSaving(false);
-    // Consider refetching userMetadata or relying on App.tsx update
+    console.log("Profile updated successfully.");
+    setEditDisplayName(trimmedName);
+    setEditError(null);
+
+    setIsSaving(false);
+      setIsEditing(false);
+      // Consider refetching userMetadata or relying on App.tsx update
   };
 
   // --- Rendering Functions ---

@@ -136,7 +136,7 @@ const RouteDetailScreen: React.FC<RouteDetailScreenProps> = ({ currentUser, rout
         .from('route_comments')
         .select(`
           *,
-          profile:profiles ( display_name )
+          profile:profiles!user_id ( display_name, avatar_url )
         `)
         .eq('route_id', route.id)
         .order('created_at', { ascending: true });
@@ -179,7 +179,7 @@ const RouteDetailScreen: React.FC<RouteDetailScreenProps> = ({ currentUser, rout
         .from('route_beta')
         .select(`
           *,
-          profile:profiles ( display_name )
+          profile:profiles ( display_name, avatar_url )
         `)
         .eq('route_id', route.id)
         .order('created_at', { ascending: false });

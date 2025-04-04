@@ -44,8 +44,11 @@ const timeAgo = (timestamp: string): string => {
 
 // Helper to get avatar URL
 const getUserAvatarUrl = (log: ActivityLogEntry): string => {
+    console.log('Log:', log);
     const defaultName = log.user_display_name || `User ${log.user_id.substring(0, 6)}`;
+    console.log('User Avatar:', log.user_avatar_url, defaultName);
     const fallbackUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(defaultName)}&background=random&color=fff`;
+    console.log('Avatar URL:', log.user_avatar_url, fallbackUrl);
     return log.user_avatar_url || fallbackUrl;
 };
 
@@ -80,7 +83,7 @@ const DashboardScreen: React.FC<DashboardScreenProps> = ({
         if (!activeGymId) { setActivityLog([]); setLoadingActivity(false); setActivityError(null); return; }
         setLoadingActivity(true); setActivityError(null);
         try {
-            const { data, error } = await supabase.from('activity_log').select(`*, profile:profiles!user_id(display_name, avatar_url), route:routes(name, grade)`).eq('gym_id', activeGymId).order('created_at', { ascending: false }).limit(20);
+            const { data, error } = await supabase.from('activity_log').select(`*, profile:profiles!user_id(display_name), route:routes(name, grade)`).eq('gym_id', activeGymId).order('created_at', { ascending: false }).limit(20);
             if (error) { console.error("Error fetching activity log:", error); if (error.code === 'PGRST200') { setActivityError("DB relation error."); } else { setActivityError("Failed to load activity."); } setActivityLog([]); }
             else if (data) { const mappedLogs = data.map(log => ({ ...log, user_display_name: (log.profile as any)?.display_name, user_avatar_url: (log.profile as any)?.avatar_url, route_name: (log.route as any)?.name || log.details?.route_name, route_grade: (log.route as any)?.grade || log.details?.route_grade, details: log.details, })); setActivityLog(mappedLogs as ActivityLogEntry[]); }
             else { setActivityLog([]); }
