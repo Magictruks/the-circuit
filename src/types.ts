@@ -56,8 +56,8 @@ import type { User } from '@supabase/supabase-js';
       created_at: string; // ISO 8601 timestamp
       updated_at: string; // ISO 8601 timestamp
       // ADDED: Follower/Following counts (optional, can be fetched separately)
-      follower_count?: number;
-      following_count?: number;
+      followers?: number; // Renamed for clarity
+      following?: number; // Renamed for clarity
     }
 
 
@@ -195,8 +195,17 @@ import type { User } from '@supabase/supabase-js';
       | 'addBeta'
       | 'log'
       | 'discover'
-      | 'profile'
-      | 'settings'; // Added settings view
+      | 'profile' // User's own profile
+      | 'publicProfile' // Viewing another user's profile
+      | 'settings';
+
+    // Data passed during navigation
+    export interface NavigationData {
+      routeId?: string;
+      searchTerm?: string;
+      profileUserId?: string; // ID of the profile to view (used for both 'profile' and 'publicProfile')
+    }
+
 
     // --- Supabase Specific Types (Example - Adapt as needed) ---
 
@@ -208,6 +217,6 @@ import type { User } from '@supabase/supabase-js';
 
     // NEW: Type for Follow Counts
     export interface FollowCounts {
-      follower_count: number;
-      following_count: number;
+      followers: number; // Renamed for clarity
+      following: number; // Renamed for clarity
     }

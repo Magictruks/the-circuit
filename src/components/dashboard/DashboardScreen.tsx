@@ -213,7 +213,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'; // Adde
                 <span className="font-medium">{userName}</span>
             ) : (
                 <button
-                    onClick={() => onNavigate('profile', { profileUserId: log.user_id })}
+                    onClick={() => onNavigate('publicProfile', { profileUserId: log.user_id })}
                     className="font-medium hover:underline text-brand-green"
                 >
                     {userName}

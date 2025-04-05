@@ -8,13 +8,14 @@ import React, { useState, useEffect, useCallback } from 'react';
     import AddBetaScreen from './components/beta/AddBetaScreen';
     import LogClimbScreen from './components/log/LogClimbScreen';
     import ProfileScreen from './components/profile/ProfileScreen';
+    import PublicProfileScreen from './components/profile/PublicProfileScreen'; // Import PublicProfileScreen
     import DiscoverScreen from './components/discover/DiscoverScreen';
-    import SettingsScreen from './components/settings/SettingsScreen'; // Import SettingsScreen
+    import SettingsScreen from './components/settings/SettingsScreen';
     import BottomNavBar from './components/dashboard/BottomNavBar';
-    import { AppView, RouteData, UserMetadata, GymData, LocationData, NavigationData } from './types'; // Added LocationData, NavigationData
+    import { AppView, RouteData, UserMetadata, GymData, LocationData, NavigationData } from './types';
     import { supabase } from './supabaseClient';
     import type { User } from '@supabase/supabase-js';
-    import { Loader2 } from 'lucide-react'; // Import Loader
+    import { Loader2 } from 'lucide-react';
 
     // --- Global State ---
     type OnboardingStep = 'welcome' | 'auth' | 'gymSelection' | 'complete';
@@ -26,25 +27,22 @@ import React, { useState, useEffect, useCallback } from 'react';
       const [selectedGymIds, setSelectedGymIds] = useState<string[]>([]);
       const [activeGymId, setActiveGymId] = useState<string | null>(null);
       const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
-      const [viewingProfileId, setViewingProfileId] = useState<string | null>(null); // State for the profile being viewed
+      const [viewingProfileId, setViewingProfileId] = useState<string | null>(null); // ID of profile being viewed (own or public)
       const [isAuthenticated, setIsAuthenticated] = useState(false);
       const [currentUser, setCurrentUser] = useState<User | null>(null);
-      const [userMetadata, setUserMetadata] = useState<UserMetadata | null>(null); // Current logged-in user's metadata
+      const [userMetadata, setUserMetadata] = useState<UserMetadata | null>(null);
       const [gymDetails, setGymDetails] = useState<Map<string, GymData>>(new Map());
       const [isLoadingAuth, setIsLoadingAuth] = useState(true);
       const [isLoadingData, setIsLoadingData] = useState(false);
       const [isLoadingGymDetails, setIsLoadingGymDetails] = useState(false);
       const [initialSearchTerm, setInitialSearchTerm] = useState<string | undefined>(undefined);
 
-      // State for fetched route details (used by RouteDetailScreen and AddBetaScreen)
-      const [selectedRouteData, setSelectedRouteData] = useState<RouteData | null | undefined>(undefined); // undefined: not fetched, null: error/not found
+      const [selectedRouteData, setSelectedRouteData] = useState<RouteData | null | undefined>(undefined);
       const [isLoadingRouteDetail, setIsLoadingRouteDetail] = useState(false);
       const [routeDetailError, setRouteDetailError] = useState<string | null>(null);
 
-      // State for routes available in the active gym (for LogClimbScreen)
       const [activeGymRoutes, setActiveGymRoutes] = useState<RouteData[]>([]);
       const [isLoadingActiveGymRoutes, setIsLoadingActiveGymRoutes] = useState(false);
-
 
       // --- Utility Functions ---
       const getGymNameById = useCallback((id: string | null): string => {
@@ -52,13 +50,16 @@ import React, { useState, useEffect, useCallback } from 'react';
         return gymDetails.get(id)?.name || 'Loading Gym...';
       }, [gymDetails]);
 
-
       // --- Effect to Fetch Gym Details ---
       useEffect(() => {
         const fetchGymDetails = async () => {
           const idsToFetchSet = new Set<string>();
           selectedGymIds.forEach(id => idsToFetchSet.add(id));
           if (activeGymId) idsToFetchSet.add(activeGymId);
+          // Add gym IDs from userMetadata if available (for profile screens)
+          if (userMetadata?.selected_gym_ids) {
+            userMetadata.selected_gym_ids.forEach(id => idsToFetchSet.add(id));
+          }
           const idsToFetch = Array.from(idsToFetchSet).filter(Boolean);
 
           if (idsToFetch.length === 0) { setGymDetails(new Map()); return; }
@@ -72,7 +73,7 @@ import React, { useState, useEffect, useCallback } from 'react';
           finally { setIsLoadingGymDetails(false); }
         };
         fetchGymDetails();
-      }, [activeGymId, selectedGymIds]);
+      }, [activeGymId, selectedGymIds, userMetadata]); // Add userMetadata dependency
 
 
       // --- User Data Fetching (for the logged-in user) ---
@@ -107,7 +108,7 @@ import React, { useState, useEffect, useCallback } from 'react';
         const handleLogoutCleanup = () => {
           if (!isMounted) return;
           setIsAuthenticated(false); setCurrentUser(null); setUserMetadata(null);
-          setSelectedGymIds([]); setActiveGymId(null); setSelectedRouteId(null); setViewingProfileId(null); // Reset viewing profile ID
+          setSelectedGymIds([]); setActiveGymId(null); setSelectedRouteId(null); setViewingProfileId(null);
           setGymDetails(new Map()); setAppView('onboarding'); setOnboardingStep('auth');
           setPreviousAppView('dashboard'); setIsLoadingData(false); setIsLoadingGymDetails(false);
           setSelectedRouteData(undefined); setIsLoadingRouteDetail(false); setRouteDetailError(null);
@@ -126,7 +127,7 @@ import React, { useState, useEffect, useCallback } from 'react';
           if (userChanged || loggingOut) {
             setCurrentUser(session?.user ?? null); setIsAuthenticated(!!session?.user);
             if (!session?.user) { handleLogoutCleanup(); }
-            else { setIsLoadingData(true); setSelectedRouteData(undefined); setIsLoadingRouteDetail(false); setRouteDetailError(null); setInitialSearchTerm(undefined); setActiveGymRoutes([]); setIsLoadingActiveGymRoutes(false); setViewingProfileId(null); } // Reset viewing profile ID on login
+            else { setIsLoadingData(true); setSelectedRouteData(undefined); setIsLoadingRouteDetail(false); setRouteDetailError(null); setInitialSearchTerm(undefined); setActiveGymRoutes([]); setIsLoadingActiveGymRoutes(false); setViewingProfileId(null); }
           }
         });
         return () => { isMounted = false; authListener?.subscription.unsubscribe(); };
@@ -143,19 +144,15 @@ import React, { useState, useEffect, useCallback } from 'react';
       }, [currentUser, fetchUserMetadata, isLoadingAuth]);
 
 
-      // --- Effect for Fetching Selected Route Details (MODIFIED to include location) ---
+      // --- Effect for Fetching Selected Route Details ---
       useEffect(() => {
         const fetchRouteDetails = async () => {
           if (!selectedRouteId) { setSelectedRouteData(undefined); setIsLoadingRouteDetail(false); setRouteDetailError(null); return; }
           setIsLoadingRouteDetail(true); setRouteDetailError(null); setSelectedRouteData(undefined);
           try {
-            // Fetch route and join locations table to get location name
             const { data, error } = await supabase
               .from('routes')
-              .select(`
-                *,
-                location_name:locations ( name )
-              `)
+              .select(`*, location_name:locations ( name )`)
               .eq('id', selectedRouteId)
               .single();
 
@@ -164,11 +161,7 @@ import React, { useState, useEffect, useCallback } from 'react';
               setRouteDetailError(error.code === 'PGRST116' ? 'Route not found.' : `Failed to load route details: ${error.message}`);
               setSelectedRouteData(null);
             } else if (data) {
-              // Map the data to include location_name directly
-              const mappedData: RouteData = {
-                ...data,
-                location_name: (data.location_name as any)?.name || null, // Extract name, handle null
-              };
+              const mappedData: RouteData = { ...data, location_name: (data.location_name as any)?.name || null };
               setSelectedRouteData(mappedData);
             } else {
               setRouteDetailError('Route not found.');
@@ -182,82 +175,64 @@ import React, { useState, useEffect, useCallback } from 'react';
             setIsLoadingRouteDetail(false);
           }
         };
-        // Fetch only when needed for detail or beta screen
         if ((appView === 'routeDetail' || appView === 'addBeta') && selectedRouteId) {
           fetchRouteDetails();
         } else {
-          // Clear data if not on relevant screens or no route selected
-          setSelectedRouteData(undefined);
-          setIsLoadingRouteDetail(false);
-          setRouteDetailError(null);
+          setSelectedRouteData(undefined); setIsLoadingRouteDetail(false); setRouteDetailError(null);
         }
-      }, [selectedRouteId, appView]); // Re-run when route ID or view changes
+      }, [selectedRouteId, appView]);
 
 
       // --- Effect for Fetching Routes for the Active Gym (for Log Screen) ---
       useEffect(() => {
         const fetchActiveGymRoutes = async () => {
-          if (!activeGymId || appView !== 'log') { // Only fetch if needed for log screen
-            setActiveGymRoutes([]);
-            setIsLoadingActiveGymRoutes(false);
-            return;
+          if (!activeGymId || appView !== 'log') {
+            setActiveGymRoutes([]); setIsLoadingActiveGymRoutes(false); return;
           }
           setIsLoadingActiveGymRoutes(true);
           try {
-            // Include location join here as well if needed for LogClimbScreen display
             const { data, error } = await supabase
               .from('routes')
-              .select(`
-                id, gym_id, name, grade, grade_color, date_set, location_id,
-                location_name:locations ( name )
-              `) // Select needed fields + location name
+              .select(`id, gym_id, name, grade, grade_color, date_set, location_id, location_name:locations ( name )`)
               .eq('gym_id', activeGymId)
               .order('name', { ascending: true });
 
             if (error) {
-              console.error('[Active Gym Routes Effect] Error fetching routes:', error);
-              setActiveGymRoutes([]);
+              console.error('[Active Gym Routes Effect] Error fetching routes:', error); setActiveGymRoutes([]);
             } else {
-               // Map the data to include location_name directly
-              const mappedRoutes = data.map(r => ({
-                ...r,
-                location_name: (r.location_name as any)?.name || null,
-              }));
+              const mappedRoutes = data.map(r => ({ ...r, location_name: (r.location_name as any)?.name || null }));
               setActiveGymRoutes(mappedRoutes as RouteData[]);
             }
           } catch (err) {
-            console.error("[Active Gym Routes Effect] Unexpected error:", err);
-            setActiveGymRoutes([]);
+            console.error("[Active Gym Routes Effect] Unexpected error:", err); setActiveGymRoutes([]);
           } finally {
             setIsLoadingActiveGymRoutes(false);
           }
         };
         fetchActiveGymRoutes();
-      }, [activeGymId, appView]); // Re-run when gym changes or view becomes 'log'
+      }, [activeGymId, appView]);
 
 
       // Update previous view state
       useEffect(() => {
-        // Store the previous view unless it's one we want to ignore for back navigation
-        const viewsToIgnoreForBack = ['log', 'settings'];
-        // Also ignore profile view if navigating *to* a profile from another profile
-        const isNavigatingBetweenProfiles = appView === 'profile' && previousAppView === 'profile';
+        const viewsToIgnoreForBack = ['log', 'settings', 'addBeta', 'publicProfile']; // Add addBeta
+        // Ignore navigating between profile and publicProfile
+        const isNavigatingBetweenProfiles = (appView === 'profile' && previousAppView === 'publicProfile') || (appView === 'publicProfile' && previousAppView === 'profile') || (appView === 'publicProfile' && previousAppView === 'publicProfile');
         setPreviousAppView(currentView => (viewsToIgnoreForBack.includes(appView) || isNavigatingBetweenProfiles ? currentView : appView));
-      }, [appView, previousAppView]); // Include previousAppView dependency
+      }, [appView, previousAppView]);
 
 
       // --- Navigation and Action Handlers ---
       const handleNavigate = (view: AppView, data?: NavigationData) => {
-        // Reset specific states based on the target view
+        // Reset states based on target view
         if (view !== 'routeDetail' && view !== 'addBeta') setSelectedRouteId(null);
         if (view !== 'routes') setInitialSearchTerm(undefined);
-        if (view !== 'profile') setViewingProfileId(null); // Reset viewing profile ID if not navigating to profile
+        if (view !== 'profile' && view !== 'publicProfile') setViewingProfileId(null); // Reset viewing ID if not going to a profile
 
         // Set states based on incoming data
         if (data?.routeId && (view === 'routeDetail' || view === 'addBeta')) setSelectedRouteId(data.routeId);
         if (data?.searchTerm && view === 'routes') setInitialSearchTerm(data.searchTerm);
-        if (data?.profileUserId && view === 'profile') setViewingProfileId(data.profileUserId); // Set viewing profile ID
-
+        if (data?.profileUserId && (view === 'profile' || view === 'publicProfile')) setViewingProfileId(data.profileUserId);
         setAppView(view);
       };
 
@@ -301,21 +276,16 @@ import React, { useState, useEffect, useCallback } from 'react';
       const handleBack = () => {
         if (appView === 'routeDetail' || appView === 'addBeta') { setAppView('routes'); setSelectedRouteId(null); }
         else if (appView === 'routes') { setAppView('dashboard'); setInitialSearchTerm(undefined); }
-        else if (appView === 'log' || appView === 'settings') { setAppView(previousAppView); } // Go back from log or settings
-        else if (appView === 'profile') {
-            // If viewing someone else's profile, go back to the previous view
-            // If viewing own profile, go back to dashboard
-            if (viewingProfileId && viewingProfileId !== currentUser?.id) {
-                setAppView(previousAppView);
-                setViewingProfileId(null); // Clear the viewing ID when going back
-            } else {
-                setAppView('dashboard');
-            }
+        else if (appView === 'log' || appView === 'settings') { setAppView(previousAppView); }
+        else if (appView === 'profile' || appView === 'publicProfile') { // Handle back from both profile types
+            console.log("previsousApp", previousAppView)
+					setAppView(previousAppView); // Go back to the stored previous view
+            setViewingProfileId(null); // Clear the viewing ID
         }
         else if (appView === 'discover') { setAppView('dashboard'); }
         else if (appView === 'onboarding' && onboardingStep === 'gymSelection') { setOnboardingStep('auth'); }
         else if (appView === 'onboarding' && onboardingStep === 'gymSelection' && isAuthenticated && userMetadata?.selected_gym_ids && userMetadata.selected_gym_ids.length > 0) { setAppView('dashboard'); setOnboardingStep('complete'); }
-        else { setAppView('dashboard'); } // Default back to dashboard
+        else { console.log("handle back idic"); setAppView('dashboard'); } // Default back to dashboard
       };
 
       const handleBetaSubmitted = () => { setAppView('routeDetail'); /* TODO: Refetch beta? */ };
@@ -340,9 +310,8 @@ import React, { useState, useEffect, useCallback } from 'react';
         if (isAuthenticated && currentUser && onboardingStep === 'complete') {
           if (appView === 'onboarding') { setAppView('dashboard'); return <div className="min-h-screen flex items-center justify-center text-brand-gray"><Loader2 className="animate-spin mr-2" />Redirecting...</div>; }
           const activeGymName = getGymNameById(activeGymId);
-          // Determine if the bottom nav should be shown
-          // Show nav unless on settings, addBeta, or routeDetail
-          const showNavBar = !['settings', 'addBeta', 'routeDetail', 'log'].includes(appView);
+          // Show nav unless on settings, addBeta, routeDetail, log, or publicProfile
+          const showNavBar = !['settings', 'addBeta', 'routeDetail', 'log', 'publicProfile'].includes(appView);
           const navBar = showNavBar ? <BottomNavBar currentView={appView} onNavigate={handleNavigate} /> : null;
           let currentScreen;
           switch (appView) {
@@ -359,19 +328,33 @@ import React, { useState, useEffect, useCallback } from 'react';
               else { currentScreen = <LogClimbScreen currentUser={currentUser} activeGymId={activeGymId} availableRoutes={activeGymRoutes} onBack={handleBack} onSubmitSuccess={handleLogSubmitted} />; }
               break;
             case 'discover':
-              // Pass currentUser and onNavigate to DiscoverScreen
               currentScreen = <DiscoverScreen currentUser={currentUser} onNavigate={handleNavigate} />;
               break;
-            case 'profile':
-              // Pass viewingProfileId to ProfileScreen. If null, it defaults to showing currentUser's profile.
+            case 'profile': // User's own profile
               currentScreen = <ProfileScreen
                                 currentUser={currentUser}
-                                viewingProfileId={viewingProfileId} // Pass the ID of the profile to view
+                                viewingProfileId={null} // Explicitly null for own profile
                                 onNavigate={handleNavigate}
                                 getGymNameById={getGymNameById}
                               />;
               break;
-            case 'settings': // Add case for settings
+            case 'publicProfile': // Viewing another user's profile
+              if (!viewingProfileId) {
+                // Handle case where ID is missing (e.g., redirect or show error)
+                console.error("Error: viewingProfileId is missing for publicProfile view.");
+                setAppView('discover'); // Go back to discover or dashboard
+                currentScreen = <div className="p-4 pt-16 text-center text-red-500">Error: Profile ID missing.</div>;
+              } else {
+                currentScreen = <PublicProfileScreen
+                                  currentUser={currentUser} // Pass logged-in user for follow button logic
+                                  viewingProfileId={viewingProfileId} // Pass the ID of the profile to view
+                                  onNavigate={handleNavigate}
+                                  getGymNameById={getGymNameById}
+                                  onBack={handleBack} // Pass handleBack
+                                />;
+              }
+              break;
+            case 'settings':
               currentScreen = <SettingsScreen currentUser={currentUser} userMetadata={userMetadata} onNavigate={handleNavigate} onLogout={handleLogout} onNavigateToGymSelection={handleNavigateToGymSelection} onBack={handleBack} />;
               break;
             default: setAppView('dashboard'); currentScreen = <DashboardScreen currentUser={currentUser} selectedGyms={selectedGymIds} activeGymId={activeGymId} onSwitchGym={handleSwitchGym} getGymNameById={getGymNameById} onNavigateToGymSelection={handleNavigateToGymSelection} onNavigate={handleNavigate} />;
