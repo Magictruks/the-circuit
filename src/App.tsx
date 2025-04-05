@@ -147,8 +147,22 @@ import React, { useState, useEffect, useCallback } from 'react';
       // --- Effect for Fetching Selected Route Details ---
       useEffect(() => {
         const fetchRouteDetails = async () => {
-          if (!selectedRouteId) { setSelectedRouteData(undefined); setIsLoadingRouteDetail(false); setRouteDetailError(null); return; }
-          setIsLoadingRouteDetail(true); setRouteDetailError(null); setSelectedRouteData(undefined);
+          // Only fetch if we are on the correct view AND have a selectedRouteId
+          if ((appView !== 'routeDetail' && appView !== 'addBeta') || !selectedRouteId) {
+            // If not on the right view or no ID, ensure data is cleared ONLY IF it's not already loading
+            // This prevents clearing data if we quickly navigate away and back while it's loading
+            if (!isLoadingRouteDetail) {
+              setSelectedRouteData(undefined);
+              setRouteDetailError(null);
+            }
+            return;
+          }
+
+          console.log(`[Route Detail Effect] Fetching details for route ID: ${selectedRouteId} (View: ${appView})`);
+          setIsLoadingRouteDetail(true);
+          setRouteDetailError(null);
+          setSelectedRouteData(undefined); // Clear previous data before fetching new
+
           try {
             const { data, error } = await supabase
               .from('routes')
@@ -159,27 +173,28 @@ import React, { useState, useEffect, useCallback } from 'react';
             if (error) {
               console.error('[Route Detail Effect] Error fetching route details:', error);
               setRouteDetailError(error.code === 'PGRST116' ? 'Route not found.' : `Failed to load route details: ${error.message}`);
-              setSelectedRouteData(null);
+              setSelectedRouteData(null); // Explicitly set to null on error
             } else if (data) {
               const mappedData: RouteData = { ...data, location_name: (data.location_name as any)?.name || null };
+              console.log('[Route Detail Effect] Route details fetched successfully:', mappedData);
               setSelectedRouteData(mappedData);
             } else {
+              console.warn('[Route Detail Effect] Route not found in DB (ID:', selectedRouteId, ')');
               setRouteDetailError('Route not found.');
-              setSelectedRouteData(null);
+              setSelectedRouteData(null); // Explicitly set to null if not found
             }
           } catch (err) {
             console.error("[Route Detail Effect] Unexpected error fetching route details:", err);
             setRouteDetailError("An unexpected error occurred while fetching route details.");
-            setSelectedRouteData(null);
+            setSelectedRouteData(null); // Explicitly set to null on catch
           } finally {
             setIsLoadingRouteDetail(false);
           }
         };
-        if ((appView === 'routeDetail' || appView === 'addBeta') && selectedRouteId) {
-          fetchRouteDetails();
-        } else {
-          setSelectedRouteData(undefined); setIsLoadingRouteDetail(false); setRouteDetailError(null);
-        }
+
+        fetchRouteDetails();
+        // This effect should run whenever the selectedRouteId changes OR when the appView changes
+        // to 'routeDetail' or 'addBeta' (provided selectedRouteId is set).
       }, [selectedRouteId, appView]);
 
 
@@ -213,26 +228,51 @@ import React, { useState, useEffect, useCallback } from 'react';
       }, [activeGymId, appView]);
 
 
-      // Update previous view state
+      // --- Update previous view state ---
+      // This effect tracks the *last main screen* before navigating to a detail/modal screen.
       useEffect(() => {
-        const viewsToIgnoreForBack = ['log', 'settings', 'addBeta', 'publicProfile']; // Add addBeta
-        // Ignore navigating between profile and publicProfile
-        const isNavigatingBetweenProfiles = (appView === 'profile' && previousAppView === 'publicProfile') || (appView === 'publicProfile' && previousAppView === 'profile') || (appView === 'publicProfile' && previousAppView === 'publicProfile');
-        setPreviousAppView(currentView => (viewsToIgnoreForBack.includes(appView) || isNavigatingBetweenProfiles ? currentView : appView));
-      }, [appView, previousAppView]);
+        const viewsToIgnoreForBack = ['log', 'settings', 'addBeta', 'publicProfile', 'profile']; // Views that shouldn't overwrite previousAppView
+        // Only update previousAppView if the *new* appView is NOT one to ignore
+        if (!viewsToIgnoreForBack.includes(appView)) {
+          setPreviousAppView(appView);
+        }
+      }, [appView]); // Only depends on appView
 
 
       // --- Navigation and Action Handlers ---
       const handleNavigate = (view: AppView, data?: NavigationData) => {
-        // Reset states based on target view
-        if (view !== 'routeDetail' && view !== 'addBeta') setSelectedRouteId(null);
-        if (view !== 'routes') setInitialSearchTerm(undefined);
-        if (view !== 'profile' && view !== 'publicProfile') setViewingProfileId(null); // Reset viewing ID if not going to a profile
+        console.log(`Navigating to: ${view}`, data);
+
+        // Store the current view before changing if it's a main view
+        // Let the useEffect handle this
+
+        // Reset states based on target view *unless* data provides the ID
+        // REMOVED: Explicit clearing of selectedRouteId here. Let the effect handle data clearing.
+        // if (view !== 'routeDetail' && view !== 'addBeta' && !data?.routeId) {
+        //   console.log("Clearing selectedRouteId because navigating away from detail/beta without new ID");
+        //   setSelectedRouteId(null);
+        // }
+        if (view !== 'routes' && !data?.searchTerm) {
+          setInitialSearchTerm(undefined);
+        }
+        if (view !== 'profile' && view !== 'publicProfile' && !data?.profileUserId) {
+          setViewingProfileId(null);
+        }
 
         // Set states based on incoming data
-        if (data?.routeId && (view === 'routeDetail' || view === 'addBeta')) setSelectedRouteId(data.routeId);
-        if (data?.searchTerm && view === 'routes') setInitialSearchTerm(data.searchTerm);
-        if (data?.profileUserId && (view === 'profile' || view === 'publicProfile')) setViewingProfileId(data.profileUserId);
+        if (data?.routeId && (view === 'routeDetail' || view === 'addBeta')) {
+          console.log("Setting selectedRouteId from navigation data:", data.routeId);
+          setSelectedRouteId(data.routeId);
+          // Don't clear route data here, let the effect fetch it based on the new ID
+        }
+        if (data?.searchTerm && view === 'routes') {
+          setInitialSearchTerm(data.searchTerm);
+        }
+        if (data?.profileUserId && (view === 'profile' || view === 'publicProfile')) {
+          setViewingProfileId(data.profileUserId);
+        }
+
+        // Finally, set the new view
         setAppView(view);
       };
 
@@ -274,19 +314,46 @@ import React, { useState, useEffect, useCallback } from 'react';
       };
 
       const handleBack = () => {
-        if (appView === 'routeDetail' || appView === 'addBeta') { setAppView('routes'); setSelectedRouteId(null); }
-        else if (appView === 'routes') { setAppView('dashboard'); setInitialSearchTerm(undefined); }
-        else if (appView === 'log' || appView === 'settings') { setAppView(previousAppView); }
-        else if (appView === 'profile' || appView === 'publicProfile') { // Handle back from both profile types
-            console.log("previsousApp", previousAppView)
-					setAppView(previousAppView); // Go back to the stored previous view
-            setViewingProfileId(null); // Clear the viewing ID
+        console.log(`HandleBack called. Current view: ${appView}, Previous view: ${previousAppView}`);
+        if (appView === 'routeDetail' || appView === 'addBeta') {
+          console.log("Back from routeDetail/addBeta -> routes");
+          setAppView('routes');
+          setSelectedRouteId(null); // Clear ID when going back to the list INTENTIONALLY
         }
-        else if (appView === 'discover') { setAppView('dashboard'); }
-        else if (appView === 'onboarding' && onboardingStep === 'gymSelection') { setOnboardingStep('auth'); }
-        else if (appView === 'onboarding' && onboardingStep === 'gymSelection' && isAuthenticated && userMetadata?.selected_gym_ids && userMetadata.selected_gym_ids.length > 0) { setAppView('dashboard'); setOnboardingStep('complete'); }
-        else { console.log("handle back idic"); setAppView('dashboard'); } // Default back to dashboard
+        else if (appView === 'routes') {
+          console.log("Back from routes -> dashboard");
+          setAppView('dashboard');
+          setInitialSearchTerm(undefined);
+        }
+        else if (appView === 'log' || appView === 'settings' || appView === 'profile' || appView === 'publicProfile') {
+          console.log(`Back from ${appView} -> ${previousAppView}`);
+          // When going back from these views, restore the previous main view.
+          // The fetch effect for routeDetail will re-run if previousAppView is 'routeDetail'
+          // because appView changes back to it. selectedRouteId should still be set.
+          setAppView(previousAppView);
+          if (appView === 'profile' || appView === 'publicProfile') {
+            setViewingProfileId(null); // Clear the viewing ID when leaving profile views
+          }
+        }
+        else if (appView === 'discover') {
+          console.log("Back from discover -> dashboard");
+          setAppView('dashboard');
+        }
+        else if (appView === 'onboarding' && onboardingStep === 'gymSelection') {
+          console.log("Back from gymSelection -> auth");
+          setOnboardingStep('auth');
+        }
+        else if (appView === 'onboarding' && onboardingStep === 'gymSelection' && isAuthenticated && userMetadata?.selected_gym_ids && userMetadata.selected_gym_ids.length > 0) {
+          console.log("Back from gymSelection (already onboarded) -> dashboard");
+          setAppView('dashboard');
+          setOnboardingStep('complete');
+        }
+        else {
+          console.log("Back from unknown/default -> dashboard");
+          setAppView('dashboard'); // Default back to dashboard
+        }
       };
+
 
       const handleBetaSubmitted = () => { setAppView('routeDetail'); /* TODO: Refetch beta? */ };
       const handleLogSubmitted = () => { setAppView(previousAppView); /* TODO: Refetch activity log on dashboard? */ };
@@ -317,8 +384,19 @@ import React, { useState, useEffect, useCallback } from 'react';
           switch (appView) {
             case 'dashboard': currentScreen = <DashboardScreen currentUser={currentUser} selectedGyms={selectedGymIds} activeGymId={activeGymId} onSwitchGym={handleSwitchGym} getGymNameById={getGymNameById} onNavigateToGymSelection={handleNavigateToGymSelection} onNavigate={handleNavigate} />; break;
             case 'routes': currentScreen = <RoutesScreen currentUser={currentUser} activeGymId={activeGymId} activeGymName={activeGymName} onNavigate={handleNavigate} initialSearchTerm={initialSearchTerm} />; break;
-            case 'routeDetail': currentScreen = <RouteDetailScreen currentUser={currentUser} route={selectedRouteData} isLoading={isLoadingRouteDetail} error={routeDetailError} onBack={handleBack} onNavigate={handleNavigate} />; break;
+            case 'routeDetail':
+              // Pass the fetched data, loading state, and error state down
+              currentScreen = <RouteDetailScreen
+                                currentUser={currentUser}
+                                route={selectedRouteData} // Pass the fetched data (can be null/undefined)
+                                isLoading={isLoadingRouteDetail} // Pass the loading state
+                                error={routeDetailError} // Pass the error state
+                                onBack={handleBack}
+                                onNavigate={handleNavigate}
+                              />;
+              break;
             case 'addBeta':
+               // AddBeta also needs the route data
                if (isLoadingRouteDetail) { currentScreen = <div className="p-4 pt-16 text-center text-brand-gray"><Loader2 className="animate-spin mr-2" />Loading Route Info...</div>; }
                else if (routeDetailError || !selectedRouteData) { currentScreen = <div className="p-4 pt-16 text-center text-red-500">Error loading route context: {routeDetailError || 'Route not found.'} <button onClick={handleBack} className="underline">Go Back</button></div>; }
                else { currentScreen = <AddBetaScreen currentUser={currentUser} route={selectedRouteData} onBack={handleBack} onSubmitSuccess={handleBetaSubmitted} />; }
@@ -340,7 +418,6 @@ import React, { useState, useEffect, useCallback } from 'react';
               break;
             case 'publicProfile': // Viewing another user's profile
               if (!viewingProfileId) {
-                // Handle case where ID is missing (e.g., redirect or show error)
                 console.error("Error: viewingProfileId is missing for publicProfile view.");
                 setAppView('discover'); // Go back to discover or dashboard
                 currentScreen = <div className="p-4 pt-16 text-center text-red-500">Error: Profile ID missing.</div>;
