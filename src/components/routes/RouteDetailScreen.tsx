@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
     import { ArrowLeft, MapPin, User as SetterIcon, CalendarDays, Star, Bookmark, Video, MessageSquareText, PencilLine, ThumbsUp, ThumbsDown, Send, PlusCircle, Loader2, AlertTriangle, Save } from 'lucide-react';
-    import { RouteData, UserProgress, BetaContent, Comment, BetaType, AppView, ActivityLogDetails } from '../../types'; // Import ActivityLogDetails
+    import { RouteData, UserProgress, BetaContent, Comment, BetaType, AppView, ActivityLogDetails, NavigationData } from '../../types'; // Import ActivityLogDetails & NavigationData
     import { supabase } from '../../supabaseClient';
     import type { User } from '@supabase/supabase-js';
 
@@ -26,7 +26,7 @@ import React, { useState, useEffect, useCallback } from 'react';
       isLoading: boolean;
       error: string | null;
       onBack: () => void;
-      onNavigate: (view: AppView, routeId?: string) => void;
+      onNavigate: (view: AppView, data?: NavigationData) => void; // Use NavigationData
     }
 
     // Default progress state
@@ -43,10 +43,10 @@ import React, { useState, useEffect, useCallback } from 'react';
     };
 
     // Helper to get display name (simple version for now)
-    const getUserDisplayName = (userId: string, currentUser: User | null, comment?: Comment | BetaContent): string => {
+    const getUserDisplayName = (userId: string, currentUser: User | null, commentOrBeta?: Comment | BetaContent): string => {
         // Prefer joined data if available
-        if (comment?.display_name) return comment.display_name;
-        // Fallback to current user's metadata
+        if (commentOrBeta?.display_name) return commentOrBeta.display_name;
+        // Fallback to current user's metadata if it's them
         if (currentUser && userId === currentUser.id) {
             return currentUser.user_metadata?.display_name || 'You';
         }
@@ -251,10 +251,10 @@ import React, { useState, useEffect, useCallback } from 'react';
 
       // --- Handlers for user interactions (Progress) ---
       const handleLogAttempt = () => { const newAttempts = progress.attempts + 1; setProgress(prev => ({ ...prev, attempts: newAttempts })); saveProgress({ attempts: newAttempts }); };
-      const handleLogSend = async (currentUser, route ) => {
+      const handleLogSend = async (currentUser: User | null, route: RouteData | null) => { // Added null checks
           console.log("Sending log...");
           console.log('Progress before send:', progress);
-          if (progress.sentDate || !route) return; // Added check for route
+          if (progress.sentDate || !route || !currentUser) return; // Added check for route & currentUser
           const now = new Date().toISOString();
           const newAttempts = progress.attempts < 1 ? 1 : progress.attempts;
           setProgress(prev => ({ ...prev, sentDate: now, attempts: newAttempts }));
@@ -327,6 +327,15 @@ import React, { useState, useEffect, useCallback } from 'react';
         }
       };
 
+      // --- Navigation Handler ---
+      const handleNavigateToProfile = (userId: string) => {
+        if (userId === currentUser?.id) {
+          onNavigate('profile'); // Navigate to own profile
+        } else {
+          onNavigate('publicProfile', { profileUserId: userId }); // Navigate to public profile
+        }
+      };
+
 
       // --- Loading and Error Handling for Route Data ---
       if (isLoading) { return ( <div className="min-h-screen flex items-center justify-center bg-gray-100"> <Loader2 className="animate-spin text-accent-blue" size={48} /> </div> ); }
@@ -386,7 +395,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 
             {/* Community Beta Section */}
             <section className="bg-white rounded-lg shadow">
-               <div className="flex justify-between items-center p-4 border-b"> <h2 className="text-lg font-semibold text-brand-gray">Community Beta</h2> <button onClick={() => onNavigate('addBeta', routeId)} className="bg-accent-blue text-white text-xs font-semibold px-3 py-1 rounded-full hover:bg-opacity-90 flex items-center gap-1"> <PlusCircle size={14}/> Add Beta </button> </div>
+               <div className="flex justify-between items-center p-4 border-b"> <h2 className="text-lg font-semibold text-brand-gray">Community Beta</h2> <button onClick={() => onNavigate('addBeta', { routeId: routeId })} className="bg-accent-blue text-white text-xs font-semibold px-3 py-1 rounded-full hover:bg-opacity-90 flex items-center gap-1"> <PlusCircle size={14}/> Add Beta </button> </div>
                <div className="flex border-b"> <button onClick={() => setActiveBetaTab('text')} className={`flex-1 py-2 text-center text-sm font-medium ${activeBetaTab === 'text' ? 'text-accent-blue border-b-2 border-accent-blue' : 'text-brand-gray hover:bg-gray-50'}`}><MessageSquareText size={16} className="inline mr-1 mb-0.5"/> Tips</button> <button onClick={() => setActiveBetaTab('video')} className={`flex-1 py-2 text-center text-sm font-medium ${activeBetaTab === 'video' ? 'text-accent-blue border-b-2 border-accent-blue' : 'text-brand-gray hover:bg-gray-50'}`}><Video size={16} className="inline mr-1 mb-0.5"/> Videos</button> <button onClick={() => setActiveBetaTab('drawing')} className={`flex-1 py-2 text-center text-sm font-medium ${activeBetaTab === 'drawing' ? 'text-accent-blue border-b-2 border-accent-blue' : 'text-brand-gray hover:bg-gray-50'}`}><PencilLine size={16} className="inline mr-1 mb-0.5"/> Drawings</button> </div>
                {/* Beta Loading/Error/Content */}
                <div className="p-4 space-y-4 max-h-60 overflow-y-auto">
@@ -396,11 +405,19 @@ import React, { useState, useEffect, useCallback } from 'react';
                      filteredBeta.length > 0 ? filteredBeta.map(beta => {
                         const userVote = userVotes[beta.id];
                         const votingThisItem = isVoting[beta.id];
+                        const isCurrentUserBeta = beta.user_id === currentUser?.id;
                         return (
                            <div key={beta.id} className="flex gap-3 border-b pb-3 last:border-b-0">
                               <img src={getUserAvatarUrl(beta, beta.user_id)} alt="User avatar" className="w-8 h-8 rounded-full flex-shrink-0 mt-1"/>
                               <div className="flex-grow">
-                                 <p className="text-sm font-medium text-brand-gray">{getUserDisplayName(beta.user_id, currentUser, beta)}</p>
+                                 {/* Make display name clickable */}
+                                 <button
+                                    onClick={() => handleNavigateToProfile(beta.user_id)}
+                                    disabled={isCurrentUserBeta} // Disable clicking own name here
+                                    className={`text-sm font-medium text-brand-gray ${!isCurrentUserBeta ? 'hover:underline hover:text-accent-blue cursor-pointer' : 'cursor-default'}`}
+                                  >
+                                    {getUserDisplayName(beta.user_id, currentUser, beta)}
+                                  </button>
                                  {beta.beta_type === 'text' && <p className="text-sm text-gray-700 mt-1">{beta.text_content}</p>}
                                  {beta.beta_type === 'video' && beta.content_url && ( <a href={beta.content_url} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline mt-1 block">Watch Video <Video size={14} className="inline ml-1"/></a> )}
                                  {beta.beta_type === 'drawing' && beta.content_url && ( <img src={beta.content_url} alt="Drawing beta" className="mt-1 border rounded max-w-full h-auto" /> )}
@@ -425,18 +442,28 @@ import React, { useState, useEffect, useCallback } from 'react';
                {commentsError && <p className="text-red-500 text-sm text-center py-4">{commentsError}</p>}
                {!isLoadingComments && !commentsError && (
                  <div className="space-y-4 mb-4 max-h-60 overflow-y-auto">
-                    {comments.length > 0 ? comments.map(comment => (
-                      <div key={comment.id} className="flex gap-3 border-b pb-3 last:border-b-0">
-                         <img src={getUserAvatarUrl(comment, comment.user_id)} alt="User avatar" className="w-8 h-8 rounded-full flex-shrink-0 mt-1"/>
-                         <div className="flex-grow">
-                            <p className="text-sm">
-                               <span className="font-medium text-brand-gray">{getUserDisplayName(comment.user_id, currentUser, comment)}</span>
-                               <span className="text-xs text-gray-400 ml-1">{new Date(comment.created_at).toLocaleTimeString([], {hour: 'numeric', minute:'2-digit'})}</span>
-                            </p>
-                            <p className="text-sm text-gray-700 mt-1">{comment.comment_text}</p>
-                         </div>
-                      </div>
-                    )) : ( <p className="text-sm text-center text-gray-500 py-4">No comments yet. Start the discussion!</p> )}
+                    {comments.length > 0 ? comments.map(comment => {
+                      const isCurrentUserComment = comment.user_id === currentUser?.id;
+                      return (
+                        <div key={comment.id} className="flex gap-3 border-b pb-3 last:border-b-0">
+                           <img src={getUserAvatarUrl(comment, comment.user_id)} alt="User avatar" className="w-8 h-8 rounded-full flex-shrink-0 mt-1"/>
+                           <div className="flex-grow">
+                              <p className="text-sm">
+                                 {/* Make display name clickable */}
+                                 <button
+                                    onClick={() => handleNavigateToProfile(comment.user_id)}
+                                    disabled={isCurrentUserComment} // Disable clicking own name here
+                                    className={`font-medium text-brand-gray ${!isCurrentUserComment ? 'hover:underline hover:text-accent-blue cursor-pointer' : 'cursor-default'}`}
+                                  >
+                                    {getUserDisplayName(comment.user_id, currentUser, comment)}
+                                  </button>
+                                 <span className="text-xs text-gray-400 ml-1">{new Date(comment.created_at).toLocaleTimeString([], {hour: 'numeric', minute:'2-digit'})}</span>
+                              </p>
+                              <p className="text-sm text-gray-700 mt-1">{comment.comment_text}</p>
+                           </div>
+                        </div>
+                      );
+                    }) : ( <p className="text-sm text-center text-gray-500 py-4">No comments yet. Start the discussion!</p> )}
                  </div>
                )}
                <form onSubmit={handlePostComment} className="flex gap-2 items-center pt-2 border-t">
