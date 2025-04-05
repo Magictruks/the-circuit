@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'; // Added useRef
-    import { ChevronDown, Search, Bell, CheckCircle, Circle, HelpCircle, PlusCircle, Loader2, Route as RouteIcon, MessageSquare, Video as VideoIcon, PencilLine as DrawingIcon, AlertTriangle, MapPin } from 'lucide-react';
-    import { AppView, ActivityLogEntry, QuickStatsData } from '../../types';
+    import { ChevronDown, Search, Bell, CheckCircle, Circle, HelpCircle, PlusCircle, Loader2, Route as RouteIcon, MessageSquare, Video as VideoIcon, PencilLine as DrawingIcon, AlertTriangle, MapPin, User as UserIcon } from 'lucide-react'; // Added UserIcon
+    import { AppView, ActivityLogEntry, QuickStatsData, NavigationData } from '../../types'; // Added NavigationData
     import { supabase } from '../../supabaseClient';
     import { User } from '@supabase/supabase-js';
 
@@ -34,7 +34,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'; // Adde
         onSwitchGym: (gymId: string) => void;
         getGymNameById: (id: string | null) => string;
         onNavigateToGymSelection: () => void;
-        onNavigate: (view: AppView, data?: string | { routeId?: string; searchTerm?: string }) => void;
+        onNavigate: (view: AppView, data?: NavigationData) => void; // Use NavigationData
     }
 
     // Helper to format time difference
@@ -54,7 +54,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'; // Adde
         return past.toLocaleDateString();
     };
 
-    // Helper to get avatar URL
+    // Helper to get avatar URL (for the user performing the action)
     const getUserAvatarUrl = (log: ActivityLogEntry): string => {
         const defaultName = log.user_display_name || `User ${log.user_id.substring(0, 6)}`;
         const fallbackUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(defaultName)}&background=random&color=fff`;
@@ -96,6 +96,8 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'; // Adde
             if (!activeGymId) { setActivityLog([]); setLoadingActivity(false); setActivityError(null); return; }
             setLoadingActivity(true); setActivityError(null);
             try {
+                // Fetch activity log, joining profiles (actor) and routes (including location)
+                // REMOVED the problematic followed_profile join
                 const { data, error } = await supabase
                     .from('activity_log')
                     .select(`
@@ -114,13 +116,15 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'; // Adde
 
                 if (error) {
                     console.error("Error fetching activity log:", error);
-                    if (error.code === 'PGRST200') { setActivityError("DB relation error."); }
-                    else { setActivityError("Failed to load activity."); }
+                    // Use a more specific error message if possible, otherwise generic
+                    setActivityError(`Failed to load activity: ${error.message}`);
                     setActivityLog([]);
                 } else if (data) {
                     const mappedLogs = data.map(log => {
                         const routeInfo = log.route as any;
                         const locationInfo = routeInfo?.location_info as any;
+                        // Note: We are NOT fetching followed_profile data here anymore.
+                        // We will rely on the 'details' field for followed user info.
                         return {
                             ...log,
                             user_display_name: (log.profile as any)?.display_name,
@@ -129,6 +133,10 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'; // Adde
                             route_grade: routeInfo?.grade || log.details?.route_grade,
                             route_grade_color: routeInfo?.grade_color || log.details?.route_grade_color,
                             location_name: locationInfo?.name || log.details?.location_name,
+                            // Extract followed user info directly from details if available
+                            followed_user_display_name: log.details?.followed_user_name,
+                            // We don't have followed_user_avatar_url from this query
+                            followed_user_avatar_url: null, // Set explicitly to null or undefined
                             details: log.details,
                         };
                     });
@@ -197,7 +205,20 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'; // Adde
         // --- Render Activity Item ---
         const renderActivityItem = (log: ActivityLogEntry) => {
             let icon = <HelpCircle size={18} className="text-gray-500" />; let text = `performed an action.`;
-            const userName = <span className="font-medium">{log.user_display_name || `User ${log.user_id.substring(0, 6)}`}</span>;
+            const userName = log.user_display_name || `User ${log.user_id.substring(0, 6)}`;
+            const isCurrentUser = currentUser?.id === log.user_id;
+
+            // Make username clickable, unless it's the current user
+            const userNameDisplay = isCurrentUser ? (
+                <span className="font-medium">{userName}</span>
+            ) : (
+                <button
+                    onClick={() => onNavigate('profile', { profileUserId: log.user_id })}
+                    className="font-medium hover:underline text-brand-green"
+                >
+                    {userName}
+                </button>
+            );
 
             const routeName = log.route_name || log.details?.route_name || 'a route';
             const routeGrade = log.route_grade || log.details?.route_grade || 'N/A';
@@ -223,18 +244,37 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'; // Adde
                 </>
             );
 
+            // Handle 'follow_user' activity type using details
+            const followedUserName = log.details?.followed_user_name || 'another user';
+            const followedUserId = log.details?.followed_user_id;
+            const isFollowingCurrentUser = followedUserId === currentUser?.id;
+
+            const followedUserDisplay = followedUserId ? (
+                <button
+                    onClick={() => onNavigate('profile', { profileUserId: followedUserId })}
+                    className="font-medium hover:underline text-brand-green"
+                >
+                    {isFollowingCurrentUser ? 'you' : followedUserName}
+                </button>
+            ) : (
+                <span className="font-medium">{followedUserName}</span>
+            );
+
+
             switch (log.activity_type) {
                 case 'log_send': icon = <CheckCircle size={18} className="text-green-500" />; text = <>sent {routeDisplay}. {log.details?.attempts ? `(${log.details.attempts} attempts)` : ''}</>; break;
                 case 'log_attempt': icon = <Circle size={18} className="text-orange-400" />; text = <>attempted {routeDisplay}.</>; break;
                 case 'add_beta': icon = log.details?.beta_type === 'video' ? <VideoIcon size={18} className="text-blue-500" /> : log.details?.beta_type === 'drawing' ? <DrawingIcon size={18} className="text-purple-500" /> : <HelpCircle size={18} className="text-blue-500" />; text = <>added {log.details?.beta_type || ''} beta for {routeDisplay}.</>; break;
                 case 'add_comment': icon = <MessageSquare size={18} className="text-indigo-500" />; text = <>commented on {routeDisplay}: "{log.details?.comment_snippet || '...'}"</>; break;
                 case 'add_route': icon = <RouteIcon size={18} className="text-brand-green" />; text = <>added a new route: {routeDisplay}.</>; break;
+                case 'follow_user': icon = <UserIcon size={18} className="text-accent-purple" />; text = <>started following {followedUserDisplay}.</>; break; // Uses details info
             }
             return (
                 <div key={log.id} className="bg-white p-3 rounded-lg shadow flex items-start space-x-3">
-                    <img src={getUserAvatarUrl(log)} alt={log.user_display_name || 'User Avatar'} className="w-10 h-10 rounded-full object-cover flex-shrink-0 mt-1"/>
+                    {/* Use actor's avatar */}
+                    <img src={getUserAvatarUrl(log)} alt={userName || 'User Avatar'} className="w-10 h-10 rounded-full object-cover flex-shrink-0 mt-1"/>
                     <div className="flex-grow">
-                        <div className="text-sm">{userName} {text}</div>
+                        <div className="text-sm">{userNameDisplay} {text}</div>
                         <p className="text-xs text-gray-500 mt-0.5">{timeAgo(log.created_at)}</p>
                     </div>
                     <div className="flex-shrink-0 ml-auto mt-1">{icon}</div>

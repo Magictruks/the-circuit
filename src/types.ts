@@ -55,6 +55,9 @@ import type { User } from '@supabase/supabase-js';
       avatar_url?: string | null; // Optional avatar URL - ADDED
       created_at: string; // ISO 8601 timestamp
       updated_at: string; // ISO 8601 timestamp
+      // ADDED: Follower/Following counts (optional, can be fetched separately)
+      follower_count?: number;
+      following_count?: number;
     }
 
 
@@ -132,7 +135,7 @@ import type { User } from '@supabase/supabase-js';
     }
 
     // --- Activity Log ---
-    export type ActivityType = 'log_send' | 'log_attempt' | 'add_beta' | 'add_comment' | 'add_route';
+    export type ActivityType = 'log_send' | 'log_attempt' | 'add_beta' | 'add_comment' | 'add_route' | 'follow_user'; // ADDED follow_user
 
     export interface ActivityLogDetails {
       // Common optional fields
@@ -146,6 +149,8 @@ import type { User } from '@supabase/supabase-js';
       comment_snippet?: string; // for add_comment
       beta_type?: BetaType; // for add_beta
       attempts?: number; // for log_send
+      followed_user_id?: string; // ADDED for follow_user
+      followed_user_name?: string; // ADDED for follow_user
       // Add more as needed
     }
 
@@ -166,6 +171,9 @@ import type { User } from '@supabase/supabase-js';
       route_grade_color?: string; // ADDED: Can override details if joined
       gym_name?: string; // Can override details if joined
       location_name?: string | null; // ADDED: Can override details if joined (can be null)
+      // ADDED: Joined data for follow activity
+      followed_user_display_name?: string;
+      followed_user_avatar_url?: string | null;
     }
 
     // --- Stats ---
@@ -196,4 +204,10 @@ import type { User } from '@supabase/supabase-js';
     export interface UserProfile extends UserMetadata {
       // Inherits fields from UserMetadata which should match 'profiles'
       // avatar_url is now inherited from UserMetadata
+    }
+
+    // NEW: Type for Follow Counts
+    export interface FollowCounts {
+      follower_count: number;
+      following_count: number;
     }

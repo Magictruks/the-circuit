@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
-    import { Settings, LogOut, BarChart3, ListChecks, Bookmark, MapPin, Edit3, Save, XCircle, Loader2, CheckCircle, Circle, AlertTriangle } from 'lucide-react';
-    import { RouteData, AppView, UserMetadata, LogbookEntry } from '../../types';
-    import { supabase } from '../../supabaseClient';
+    import { Settings, BarChart3, ListChecks, Bookmark, MapPin, Edit3, Save, XCircle, Loader2, CheckCircle, Circle, AlertTriangle, UserPlus, UserCheck, ArrowLeft } from 'lucide-react'; // Added UserPlus, UserCheck, ArrowLeft
+    import { RouteData, AppView, UserMetadata, LogbookEntry, FollowCounts, ActivityLogDetails, NavigationData } from '../../types'; // Added FollowCounts, ActivityLogDetails, NavigationData
+    import { supabase, followUser, unfollowUser, checkFollowing, getFollowCounts } from '../../supabaseClient'; // Import follow/unfollow functions
     import type { User } from '@supabase/supabase-js';
 
     const getGradeColorClass = (colorName: string | undefined): string => {
@@ -22,10 +22,9 @@ import React, { useState, useEffect, useCallback } from 'react';
 
 
     interface ProfileScreenProps {
-       currentUser: User | null;
-       userMetadata: UserMetadata | null;
-       onNavigate: (view: AppView, data?: string | { routeId?: string; searchTerm?: string }) => void; // Updated data type
-       onLogout: () => Promise<void>; // Keep onLogout prop for now, but button moved
+       currentUser: User | null; // The logged-in user
+       viewingProfileId: string | null; // The ID of the profile being viewed (null if viewing own)
+       onNavigate: (view: AppView, data?: NavigationData) => void; // Use NavigationData
        getGymNameById: (id: string | null) => string;
     }
 
@@ -37,9 +36,12 @@ import React, { useState, useEffect, useCallback } from 'react';
         highestGrade: string | null;
     }
 
-    const ProfileScreen: React.FC<ProfileScreenProps> = ({ currentUser, userMetadata, onNavigate, onLogout, getGymNameById }) => {
+    const ProfileScreen: React.FC<ProfileScreenProps> = ({ currentUser, viewingProfileId, onNavigate, getGymNameById }) => {
+      const [profileData, setProfileData] = useState<UserMetadata | null>(null); // Data of the profile being viewed
+      const [isLoadingProfile, setIsLoadingProfile] = useState(true);
+      const [profileError, setProfileError] = useState<string | null>(null);
+
       const [activeTab, setActiveTab] = useState<ProfileTab>('logbook');
-      // const [isLoggingOut, setIsLoggingOut] = useState(false); // Logout state moved to SettingsScreen
       const [isEditing, setIsEditing] = useState(false);
       const [editDisplayName, setEditDisplayName] = useState('');
       const [editError, setEditError] = useState<string | null>(null);
@@ -60,17 +62,79 @@ import React, { useState, useEffect, useCallback } from 'react';
       const [isLoadingStats, setIsLoadingStats] = useState(false);
       const [statsError, setStatsError] = useState<string | null>(null);
 
+      // State for Following
+      const [isFollowing, setIsFollowing] = useState(false);
+      const [isLoadingFollowStatus, setIsLoadingFollowStatus] = useState(false);
+      const [isUpdatingFollow, setIsUpdatingFollow] = useState(false);
+      const [followCounts, setFollowCounts] = useState<FollowCounts>({ followers: 0, following: 0 });
+      const [isLoadingFollowCounts, setIsLoadingFollowCounts] = useState(false);
 
-      const currentDisplayName = userMetadata?.display_name || currentUser?.user_metadata?.display_name || currentUser?.email?.split('@')[0] || 'Climber';
+      // Determine the actual user ID to fetch data for
+      const profileUserId = viewingProfileId || currentUser?.id;
+      const isOwnProfile = !viewingProfileId || viewingProfileId === currentUser?.id;
 
-      useEffect(() => { if (isEditing) { setEditDisplayName(currentDisplayName); } }, [isEditing, currentDisplayName]);
+      // --- Fetch Profile Data ---
+      const fetchProfileData = useCallback(async () => {
+        if (!profileUserId) {
+          setProfileData(null); setIsLoadingProfile(false); setProfileError("No user ID provided.");
+          setLogbookEntries([]); setWishlistItems([]); setUserStats(null); setFollowCounts({ followers: 0, following: 0 });
+          return;
+        }
+        setIsLoadingProfile(true); setProfileError(null);
+        try {
+          const { data, error } = await supabase.from('profiles').select('*').eq('user_id', profileUserId).single();
+          if (error) {
+            console.error("Error fetching profile data:", error);
+            setProfileError(error.code === 'PGRST116' ? "Profile not found." : "Failed to load profile.");
+            setProfileData(null);
+          } else {
+            setProfileData(data);
+          }
+        } catch (err: any) {
+          console.error("Unexpected error fetching profile:", err);
+          setProfileError(err.message || "An unexpected error occurred.");
+          setProfileData(null);
+        } finally {
+          setIsLoadingProfile(false);
+        }
+      }, [profileUserId]);
 
-      // --- Fetch Logbook Data (MODIFIED to include location) ---
+      // --- Fetch Follow Status ---
+      const fetchFollowStatus = useCallback(async () => {
+        if (isOwnProfile || !currentUser || !profileUserId) { setIsFollowing(false); setIsLoadingFollowStatus(false); return; }
+        setIsLoadingFollowStatus(true);
+        try {
+          const followingStatus = await checkFollowing(currentUser.id, profileUserId);
+          setIsFollowing(followingStatus);
+        } catch (error) {
+          console.error("Error checking follow status:", error);
+          // Optionally set an error state here
+        } finally {
+          setIsLoadingFollowStatus(false);
+        }
+      }, [currentUser, profileUserId, isOwnProfile]);
+
+      // --- Fetch Follow Counts ---
+      const fetchFollowCounts = useCallback(async () => {
+        if (!profileUserId) { setFollowCounts({ followers: 0, following: 0 }); setIsLoadingFollowCounts(false); return; }
+        setIsLoadingFollowCounts(true);
+        try {
+          const counts = await getFollowCounts(profileUserId);
+          setFollowCounts({ followers: counts.followers, following: counts.following });
+        } catch (error) {
+          console.error("Error fetching follow counts:", error);
+          // Optionally set an error state
+        } finally {
+          setIsLoadingFollowCounts(false);
+        }
+      }, [profileUserId]);
+
+
+      // --- Fetch Logbook Data ---
       const fetchLogbook = useCallback(async () => {
-        if (!currentUser) { setLogbookEntries([]); setIsLoadingLogbook(false); setLogbookError(null); return; }
+        if (!profileUserId) { setLogbookEntries([]); setIsLoadingLogbook(false); setLogbookError(null); return; }
         setIsLoadingLogbook(true); setLogbookError(null);
         try {
-          // Join routes and then locations to get location_name
           const { data, error } = await supabase
             .from('user_route_progress')
             .select(`
@@ -79,27 +143,26 @@ import React, { useState, useEffect, useCallback } from 'react';
                 id, gym_id, name, grade, grade_color, date_set, location_id,
                 location_name:locations ( name )
               )
-            `) // Removed routes.location
-            .eq('user_id', currentUser.id)
-            .or('sent_at.not.is.null,attempts.gt.0') // Fetch sends OR attempts > 0
+            `)
+            .eq('user_id', profileUserId) // Use profileUserId
+            .or('sent_at.not.is.null,attempts.gt.0')
             .order('updated_at', { ascending: false });
 
           if (error) {
             console.error("Error fetching logbook:", error);
-            setLogbookError("Failed to load your climb log.");
+            setLogbookError("Failed to load climb log.");
             setLogbookEntries([]);
           } else if (data) {
-            // Map the data, extracting location_name
             const mappedEntries = data.map(item => {
-              const routeData = item.route as any; // Cast for easier access
+              const routeData = item.route as any;
               const locationInfo = routeData?.location_name as any;
               return {
-                ...(routeData as RouteData), // Spread the base route data
-                location_name: locationInfo?.name || null, // Extract location name
+                ...(routeData as RouteData),
+                location_name: locationInfo?.name || null,
                 user_progress_attempts: item.attempts,
                 user_progress_sent_at: item.sent_at,
                 user_progress_rating: item.rating,
-                user_progress_notes: item.notes, // Keep as potentially null
+                user_progress_notes: item.notes,
                 user_progress_wishlist: item.wishlist,
                 user_progress_updated_at: item.updated_at,
               };
@@ -115,14 +178,13 @@ import React, { useState, useEffect, useCallback } from 'react';
         } finally {
           setIsLoadingLogbook(false);
         }
-      }, [currentUser]);
+      }, [profileUserId]); // Depend on profileUserId
 
-      // --- Fetch Wishlist Data (MODIFIED to include location) ---
+      // --- Fetch Wishlist Data ---
       const fetchWishlist = useCallback(async () => {
-        if (!currentUser) { setWishlistItems([]); setIsLoadingWishlist(false); setWishlistError(null); return; }
+        if (!profileUserId) { setWishlistItems([]); setIsLoadingWishlist(false); setWishlistError(null); return; }
         setIsLoadingWishlist(true); setWishlistError(null);
         try {
-          // Join routes and then locations
           const { data, error } = await supabase
             .from('user_route_progress')
             .select(`
@@ -130,17 +192,16 @@ import React, { useState, useEffect, useCallback } from 'react';
                 id, gym_id, name, grade, grade_color, date_set, location_id,
                 location_name:locations ( name )
               )
-            `) // Removed routes.location
-            .eq('user_id', currentUser.id)
+            `)
+            .eq('user_id', profileUserId) // Use profileUserId
             .eq('wishlist', true)
-            .order('created_at', { referencedTable: 'routes', ascending: false }); // Order by route creation date
+            .order('created_at', { referencedTable: 'routes', ascending: false });
 
           if (error) {
             console.error("Error fetching wishlist:", error);
-            setWishlistError("Failed to load your wishlist.");
+            setWishlistError("Failed to load wishlist.");
             setWishlistItems([]);
           } else if (data) {
-            // Map the data, extracting location_name
             const mappedItems = data.map(item => {
                const routeData = item.route as any;
                const locationInfo = routeData?.location_name as any;
@@ -160,17 +221,17 @@ import React, { useState, useEffect, useCallback } from 'react';
         } finally {
           setIsLoadingWishlist(false);
         }
-      }, [currentUser]);
+      }, [profileUserId]); // Depend on profileUserId
 
       // --- Fetch Stats Data ---
       const fetchStats = useCallback(async () => {
-          if (!currentUser) { setUserStats(null); setIsLoadingStats(false); setStatsError(null); return; }
+          if (!profileUserId) { setUserStats(null); setIsLoadingStats(false); setStatsError(null); return; }
           setIsLoadingStats(true); setStatsError(null);
           try {
               const { data, error } = await supabase
                   .from('user_route_progress')
                   .select(` route_id, route:routes ( grade ) `)
-                  .eq('user_id', currentUser.id)
+                  .eq('user_id', profileUserId) // Use profileUserId
                   .not('sent_at', 'is', null);
 
               if (error) {
@@ -205,54 +266,39 @@ import React, { useState, useEffect, useCallback } from 'react';
           } finally {
               setIsLoadingStats(false);
           }
-      }, [currentUser]);
+      }, [profileUserId]); // Depend on profileUserId
 
 
-      // Fetch all data on mount/user change
+      // Fetch all data when profileUserId changes
       useEffect(() => {
+        fetchProfileData();
+        fetchFollowStatus();
+        fetchFollowCounts();
         fetchLogbook();
         fetchWishlist();
         fetchStats();
-      }, [fetchLogbook, fetchWishlist, fetchStats]);
+      }, [profileUserId, fetchProfileData, fetchFollowStatus, fetchFollowCounts, fetchLogbook, fetchWishlist, fetchStats]); // Add profileUserId dependency
+
 
       // --- Handlers ---
-      // const handleLogoutClick = async () => { setIsLoggingOut(true); await onLogout(); }; // Moved to SettingsScreen
-      const handleEditClick = () => { setEditError(null); setEditDisplayName(currentDisplayName); setIsEditing(true); };
+      const handleEditClick = () => { setEditError(null); setEditDisplayName(profileData?.display_name || ''); setIsEditing(true); };
       const handleCancelEdit = () => { setIsEditing(false); setEditError(null); };
       const handleSaveEdit = async () => {
-        if (!currentUser) return; // Guard against missing user
+        if (!currentUser || !isOwnProfile) return;
         const trimmedName = editDisplayName.trim();
         if (!trimmedName) { setEditError("Display name cannot be empty."); return; }
-        if (trimmedName === currentDisplayName) { setIsEditing(false); return; }
+        if (trimmedName === profileData?.display_name) { setIsEditing(false); return; }
         setIsSaving(true); setEditError(null);
 
         try {
-            // Update profile table first
-            const { error: profileUpdateError } = await supabase
-                .from('profiles')
-                .update({ display_name: trimmedName })
-                .eq('user_id', currentUser.id);
-
+            const { error: profileUpdateError } = await supabase.from('profiles').update({ display_name: trimmedName }).eq('user_id', currentUser.id);
             if (profileUpdateError) throw profileUpdateError;
-
-            // Then update auth user metadata
-            const { error: authUpdateError } = await supabase.auth.updateUser({
-                data: { display_name: trimmedName }
-            });
-
-            if (authUpdateError) {
-                // Attempt to revert profile update? Maybe not necessary, log error.
-                console.error("Auth metadata update failed after profile update:", authUpdateError);
-                throw new Error(`Auth update failed: ${authUpdateError.message}. Profile might be updated.`);
-            }
-
+            const { error: authUpdateError } = await supabase.auth.updateUser({ data: { display_name: trimmedName } });
+            if (authUpdateError) { console.error("Auth metadata update failed after profile update:", authUpdateError); throw new Error(`Auth update failed: ${authUpdateError.message}. Profile might be updated.`); }
             console.log("Profile and auth metadata updated successfully.");
-            // Manually update local state to reflect change immediately
-            // This relies on App.tsx eventually refetching, but provides instant feedback
-            // setUserMetadata(prev => prev ? { ...prev, display_name: trimmedName } : null);
-            // Let App.tsx handle the refetch via onAuthStateChange or direct call
+            // Refetch profile data to show the update
+            await fetchProfileData();
             setIsEditing(false);
-
         } catch (error: any) {
             console.error("Error saving display name:", error);
             setEditError(`Failed to update name: ${error.message}`);
@@ -261,40 +307,69 @@ import React, { useState, useEffect, useCallback } from 'react';
         }
       };
 
+      // --- Follow/Unfollow Handler ---
+      const handleFollowToggle = async () => {
+        if (!currentUser || !profileUserId || isOwnProfile || isUpdatingFollow) return;
+        setIsUpdatingFollow(true);
+        try {
+          if (isFollowing) {
+            await unfollowUser(currentUser.id, profileUserId);
+            setIsFollowing(false);
+            // Decrement follower count locally for immediate feedback
+            setFollowCounts(prev => ({ ...prev, followers: Math.max(0, prev.followers - 1) }));
+          } else {
+            await followUser(currentUser.id, profileUserId);
+            setIsFollowing(true);
+            // Increment follower count locally
+            setFollowCounts(prev => ({ ...prev, followers: prev.followers + 1 }));
+
+            // Log follow activity
+            const activityDetails: ActivityLogDetails = {
+                followed_user_id: profileUserId,
+                followed_user_name: profileData?.display_name || 'User', // Use fetched profile name
+            };
+            const { error: logError } = await supabase.from('activity_log').insert({
+                user_id: currentUser.id,
+                gym_id: profileData?.current_gym_id, // Log against the followed user's current gym? Or null?
+                activity_type: 'follow_user',
+                details: activityDetails,
+            });
+            if (logError) console.error('Error logging follow activity:', logError);
+          }
+        } catch (error: any) {
+          console.error("Error updating follow status:", error);
+          // Optionally show an error message to the user
+          // Re-fetch status on error to be safe
+          await fetchFollowStatus();
+          await fetchFollowCounts(); // Re-fetch counts on error too
+        } finally {
+          setIsUpdatingFollow(false);
+        }
+      };
+
+
       // --- Rendering Functions ---
       const renderLogbookItem = (entry: LogbookEntry) => {
-        const displayLocation = entry.location_name || 'Unknown Location'; // Use location_name or a default
+        const displayLocation = entry.location_name || 'Unknown Location';
         return (
           <div key={entry.id} onClick={() => onNavigate('routeDetail', { routeId: entry.id })} className="flex items-center gap-3 p-3 border-b last:border-b-0 hover:bg-gray-50 cursor-pointer">
-            <div className={`w-8 h-8 ${getGradeColorClass(entry.grade_color)} rounded-full flex items-center justify-center text-white font-bold text-xs flex-shrink-0`}>
-              {entry.grade}
-            </div>
+            <div className={`w-8 h-8 ${getGradeColorClass(entry.grade_color)} rounded-full flex items-center justify-center text-white font-bold text-xs flex-shrink-0`}> {entry.grade} </div>
             <div className="flex-grow overflow-hidden">
               <p className="font-medium text-brand-gray truncate">{entry.name}</p>
-              {/* Display location name */}
-              <p className="text-xs text-gray-500">
-                {displayLocation} - Logged: {new Date(entry.user_progress_updated_at).toLocaleDateString()}
-              </p>
+              <p className="text-xs text-gray-500"> {displayLocation} - Logged: {new Date(entry.user_progress_updated_at).toLocaleDateString()} </p>
             </div>
-            {entry.user_progress_sent_at ? (
-              <CheckCircle size={18} className="text-green-500 flex-shrink-0" title={`Sent (${entry.user_progress_attempts} attempts)`} />
-            ) : entry.user_progress_attempts > 0 ? (
-              <Circle size={18} className="text-orange-400 flex-shrink-0" title={`Attempted (${entry.user_progress_attempts} attempts)`} />
-            ) : null}
+            {entry.user_progress_sent_at ? ( <CheckCircle size={18} className="text-green-500 flex-shrink-0" title={`Sent (${entry.user_progress_attempts} attempts)`} /> ) : entry.user_progress_attempts > 0 ? ( <Circle size={18} className="text-orange-400 flex-shrink-0" title={`Attempted (${entry.user_progress_attempts} attempts)`} /> ) : null}
           </div>
         );
       };
 
       const renderWishlistItem = (route: RouteData) => {
-         const displayLocation = route.location_name || 'Unknown Location'; // Use location_name or a default
+         const displayLocation = route.location_name || 'Unknown Location';
          return (
             <div key={route.id} onClick={() => onNavigate('routeDetail', { routeId: route.id })} className="flex items-center gap-3 p-3 border-b last:border-b-0 hover:bg-gray-50 cursor-pointer">
-               <div className={`w-8 h-8 ${getGradeColorClass(route.grade_color)} rounded-full flex items-center justify-center text-white font-bold text-xs flex-shrink-0`}>
-                  {route.grade}
-               </div>
+               <div className={`w-8 h-8 ${getGradeColorClass(route.grade_color)} rounded-full flex items-center justify-center text-white font-bold text-xs flex-shrink-0`}> {route.grade} </div>
                <div className="flex-grow overflow-hidden">
                   <p className="font-medium text-brand-gray truncate">{route.name}</p>
-                  {/* Display location name */}
                   <p className="text-xs text-gray-500">{displayLocation}</p>
                </div>
                <Bookmark size={18} className="text-accent-yellow flex-shrink-0" />
@@ -303,46 +378,50 @@ import React, { useState, useEffect, useCallback } from 'react';
       };
 
       const renderStats = () => {
-          if (isLoadingStats) {
-              return <div className="flex justify-center items-center p-6"> <Loader2 className="animate-spin text-accent-blue mr-2" size={24} /> Loading stats... </div>;
-          }
-          if (statsError) {
-              return <div className="p-6 text-center text-red-500"> <AlertTriangle size={20} className="inline mr-1 mb-0.5"/> {statsError} </div>;
-          }
-          if (!userStats) {
-              return <p className="text-center text-gray-500 p-6">No stats available yet. Go log some climbs!</p>;
-          }
-
+          if (isLoadingStats) { return <div className="flex justify-center items-center p-6"> <Loader2 className="animate-spin text-accent-blue mr-2" size={24} /> Loading stats... </div>; }
+          if (statsError) { return <div className="p-6 text-center text-red-500"> <AlertTriangle size={20} className="inline mr-1 mb-0.5"/> {statsError} </div>; }
+          if (!userStats) { return <p className="text-center text-gray-500 p-6">No stats available yet.</p>; }
           return (
               <div className="p-4 space-y-3">
-                  <div className="flex justify-between items-center p-3 bg-accent-blue/10 rounded-lg">
-                      <span className="text-sm font-medium text-brand-gray">Total Sends</span>
-                      <span className="font-bold text-accent-blue">{userStats.totalSends}</span>
-                  </div>
-                  <div className="flex justify-between items-center p-3 bg-accent-purple/10 rounded-lg">
-                      <span className="text-sm font-medium text-brand-gray">Unique Routes Climbed</span>
-                      <span className="font-bold text-accent-purple">{userStats.uniqueRoutes}</span>
-                  </div>
-                  <div className="flex justify-between items-center p-3 bg-accent-red/10 rounded-lg">
-                      <span className="text-sm font-medium text-brand-gray">Highest Grade Sent</span>
-                      <span className="font-bold text-accent-red">{userStats.highestGrade || 'N/A'}</span>
-                  </div>
+                  <div className="flex justify-between items-center p-3 bg-accent-blue/10 rounded-lg"> <span className="text-sm font-medium text-brand-gray">Total Sends</span> <span className="font-bold text-accent-blue">{userStats.totalSends}</span> </div>
+                  <div className="flex justify-between items-center p-3 bg-accent-purple/10 rounded-lg"> <span className="text-sm font-medium text-brand-gray">Unique Routes Climbed</span> <span className="font-bold text-accent-purple">{userStats.uniqueRoutes}</span> </div>
+                  <div className="flex justify-between items-center p-3 bg-accent-red/10 rounded-lg"> <span className="text-sm font-medium text-brand-gray">Highest Grade Sent</span> <span className="font-bold text-accent-red">{userStats.highestGrade || 'N/A'}</span> </div>
               </div>
           );
       };
       // --- End Rendering Functions ---
 
-      const userAvatar = userMetadata?.avatar_url || currentUser?.user_metadata?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(currentDisplayName)}&background=random&color=fff`;
-      const userHomeGymIds = userMetadata?.selected_gym_ids || [];
+      // --- Loading / Error States for Profile ---
+      if (isLoadingProfile) { return <div className="min-h-screen flex items-center justify-center"><Loader2 className="animate-spin text-accent-blue" size={32} /></div>; }
+      if (profileError) { return <div className="min-h-screen flex items-center justify-center p-4 text-center text-red-500"><AlertTriangle size={24} className="mb-2"/>{profileError}</div>; }
+      if (!profileData) { return <div className="min-h-screen flex items-center justify-center p-4 text-center text-brand-gray">Profile data could not be loaded.</div>; }
+      // --- End Loading / Error States ---
+
+      const currentDisplayName = profileData.display_name || 'Climber';
+      const userAvatar = profileData.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(currentDisplayName)}&background=random&color=fff`;
+      const userHomeGymIds = profileData.selected_gym_ids || [];
 
       return (
         <div className="min-h-screen bg-gray-100 pb-16">
           {/* Header */}
-          <header className="bg-gradient-to-r from-brand-green to-brand-gray p-4 pt-8 pb-16 text-white relative">
-             <div className="flex items-center gap-4">
+          <header className="bg-gradient-to-r from-brand-green to-brand-gray p-4 pt-8 pb-20 text-white relative">
+             {/* Back Button for non-own profiles */}
+             {!isOwnProfile && (
+                <button onClick={() => onNavigate(previousAppView || 'dashboard')} className="absolute top-4 left-4 text-white/80 hover:text-white z-10">
+                   <ArrowLeft size={24} />
+                </button>
+             )}
+             {/* Settings Button for own profile */}
+             {isOwnProfile && (
+                <div className="absolute top-4 right-4 flex gap-2 z-10">
+                   <button onClick={() => onNavigate('settings')} className="text-white/80 hover:text-white"> <Settings size={20} /> </button>
+                </div>
+             )}
+
+             <div className="flex items-center gap-4 relative z-0">
                 <img src={userAvatar} alt={currentDisplayName} className="w-20 h-20 rounded-full border-4 border-white shadow-lg object-cover bg-gray-300" />
                 <div className="flex-grow min-w-0">
-                   {isEditing ? (
+                   {isEditing && isOwnProfile ? (
                      <div className="relative">
                        <input type="text" value={editDisplayName} onChange={(e) => setEditDisplayName(e.target.value)} className="text-2xl font-bold bg-transparent border-b-2 border-white/50 focus:border-white outline-none text-white w-full pr-16" autoFocus maxLength={50} disabled={isSaving} />
                        <div className="absolute top-0 right-0 flex gap-1 items-center h-full">
@@ -352,39 +431,62 @@ import React, { useState, useEffect, useCallback } from 'react';
                        {editError && <p className="text-red-300 text-xs mt-1 absolute -bottom-5">{editError}</p>}
                      </div>
                    ) : (
-                     <div className="flex items-center gap-2"> <h1 className="text-2xl font-bold truncate">{currentDisplayName}</h1> <button onClick={handleEditClick} className="text-white/70 hover:text-white flex-shrink-0"> <Edit3 size={18} /> </button> </div>
+                     <div className="flex items-center gap-2">
+                        <h1 className="text-2xl font-bold truncate">{currentDisplayName}</h1>
+                        {isOwnProfile && <button onClick={handleEditClick} className="text-white/70 hover:text-white flex-shrink-0"> <Edit3 size={18} /> </button>}
+                     </div>
                    )}
                    <div className="text-sm opacity-90 mt-1 flex items-start gap-1"> <MapPin size={14} className="mt-0.5 flex-shrink-0"/> <span className="truncate"> {userHomeGymIds.length > 0 ? userHomeGymIds.map(id => getGymNameById(id)).join(', ') : 'No gyms selected'} </span> </div>
+                   {/* Follow Counts */}
+                   <div className="text-sm opacity-90 mt-2 flex items-center gap-4">
+                      {isLoadingFollowCounts ? <Loader2 size={14} className="animate-spin"/> : (
+                         <>
+                            <span><strong className="font-bold">{followCounts.followers}</strong> Followers</span>
+                            <span><strong className="font-bold">{followCounts.following}</strong> Following</span>
+                         </>
+                      )}
+                   </div>
                 </div>
              </div>
-             {/* Settings Button */}
-             <div className="absolute top-4 right-4 flex gap-2">
-                <button onClick={() => onNavigate('settings')} className="text-white/80 hover:text-white">
-                   <Settings size={20} />
-                </button>
-             </div>
+             {/* Follow/Unfollow Button */}
+             {!isOwnProfile && currentUser && (
+                <div className="absolute bottom-4 right-4 z-10">
+                   <button
+                      onClick={handleFollowToggle}
+                      disabled={isLoadingFollowStatus || isUpdatingFollow}
+                      className={`px-4 py-1.5 rounded-full text-sm font-semibold transition-colors duration-200 flex items-center gap-1.5 disabled:opacity-60 ${
+                         isFollowing
+                            ? 'bg-white text-brand-green hover:bg-gray-200'
+                            : 'bg-accent-blue text-white hover:bg-opacity-90'
+                      }`}
+                   >
+                      {isLoadingFollowStatus || isUpdatingFollow ? (
+                         <Loader2 size={16} className="animate-spin" />
+                      ) : isFollowing ? (
+                         <><UserCheck size={16} /> Following</>
+                      ) : (
+                         <><UserPlus size={16} /> Follow</>
+                      )}
+                   </button>
+                </div>
+             )}
           </header>
 
           {/* Main Content Area */}
-          <main className="p-4 -mt-10 relative z-0">
+          <main className="p-4 -mt-12 relative z-0"> {/* Adjusted negative margin */}
             {/* Tab Navigation */}
             <div className="bg-white rounded-lg shadow mb-4 flex">
                <button onClick={() => setActiveTab('logbook')} className={`flex-1 py-3 text-center text-sm font-medium flex items-center justify-center gap-1 ${activeTab === 'logbook' ? 'text-accent-blue border-b-2 border-accent-blue' : 'text-brand-gray hover:bg-gray-50 rounded-t-lg'}`}> <ListChecks size={16}/> Logbook </button>
-               <button onClick={() => setActiveTab('wishlist')} className={`flex-1 py-3 text-center text-sm font-medium flex items-center justify-center gap-1 ${activeTab === 'wishlist' ? 'text-accent-blue border-b-2 border-accent-blue' : 'text-brand-gray hover:bg-gray-50 rounded-t-lg'}`}> <Bookmark size={16}/> Wishlist </button>
+               {isOwnProfile && <button onClick={() => setActiveTab('wishlist')} className={`flex-1 py-3 text-center text-sm font-medium flex items-center justify-center gap-1 ${activeTab === 'wishlist' ? 'text-accent-blue border-b-2 border-accent-blue' : 'text-brand-gray hover:bg-gray-50 rounded-t-lg'}`}> <Bookmark size={16}/> Wishlist </button>}
                <button onClick={() => setActiveTab('stats')} className={`flex-1 py-3 text-center text-sm font-medium flex items-center justify-center gap-1 ${activeTab === 'stats' ? 'text-accent-blue border-b-2 border-accent-blue' : 'text-brand-gray hover:bg-gray-50 rounded-t-lg'}`}> <BarChart3 size={16}/> Stats </button>
             </div>
 
             {/* Tab Content */}
             <div className="bg-white rounded-lg shadow min-h-[200px]">
               {activeTab === 'logbook' && ( <div> {isLoadingLogbook ? ( <div className="flex justify-center items-center p-6"> <Loader2 className="animate-spin text-accent-blue mr-2" size={24} /> Loading logbook... </div> ) : logbookError ? ( <p className="text-center text-red-500 p-6">{logbookError}</p> ) : logbookEntries.length > 0 ? ( logbookEntries.map(renderLogbookItem) ) : ( <p className="text-center text-gray-500 p-6">No climbs logged yet.</p> )} </div> )}
-              {activeTab === 'wishlist' && ( <div> {isLoadingWishlist ? ( <div className="flex justify-center items-center p-6"> <Loader2 className="animate-spin text-accent-blue mr-2" size={24} /> Loading wishlist... </div> ) : wishlistError ? ( <p className="text-center text-red-500 p-6">{wishlistError}</p> ) : wishlistItems.length > 0 ? ( wishlistItems.map(renderWishlistItem) ) : ( <p className="text-center text-gray-500 p-6">Your wishlist is empty.</p> )} </div> )}
+              {activeTab === 'wishlist' && isOwnProfile && ( <div> {isLoadingWishlist ? ( <div className="flex justify-center items-center p-6"> <Loader2 className="animate-spin text-accent-blue mr-2" size={24} /> Loading wishlist... </div> ) : wishlistError ? ( <p className="text-center text-red-500 p-6">{wishlistError}</p> ) : wishlistItems.length > 0 ? ( wishlistItems.map(renderWishlistItem) ) : ( <p className="text-center text-gray-500 p-6">Your wishlist is empty.</p> )} </div> )}
               {activeTab === 'stats' && renderStats()}
             </div>
-
-            {/* Logout Section - REMOVED */}
-            {/* <div className="mt-6 text-center">
-               <button onClick={handleLogoutClick} disabled={isLoggingOut} className="text-sm text-brand-gray hover:text-accent-red flex items-center justify-center gap-1 mx-auto disabled:opacity-50 disabled:cursor-wait"> {isLoggingOut ? ( <> <Loader2 size={16} className="animate-spin mr-1"/> Logging out... </> ) : ( <> <LogOut size={16} /> Logout </> )} </button>
-            </div> */}
           </main>
         </div>
       );
