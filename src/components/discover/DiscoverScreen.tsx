@@ -297,7 +297,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
                         </div>
 
                         {/* Suggestions/Search Results Area */}
-                        <div className="bg-white p-4 rounded-lg shadow space-y-3 min-h-[150px]">
+                        <div className="bg-white p-4 rounded-lg shadow space-y-3">
                           {/* Loading States */}
                           {isLoadingSearch && (
                             <div className="flex justify-center items-center py-4">
