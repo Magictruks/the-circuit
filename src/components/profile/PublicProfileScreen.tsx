@@ -1,4 +1,4 @@
-    import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
     import { BarChart3, ListChecks, MapPin, Loader2, CheckCircle, Circle, AlertTriangle, UserPlus, UserCheck, ArrowLeft } from 'lucide-react';
     import { RouteData, AppView, UserMetadata, LogbookEntry, FollowCounts, ActivityLogDetails, NavigationData } from '../../types';
     import { supabase, followUser, unfollowUser, checkFollowing, getFollowCounts } from '../../supabaseClient';
