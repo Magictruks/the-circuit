@@ -535,7 +535,6 @@ import React, { useState, useEffect, useCallback } from 'react';
                                       )}
                                       {/* Disable voting if route removed */}
                                       <button onClick={() => handleVote(beta.id, 1)} disabled={!currentUser || votingThisItem || isRemoved} className={`flex items-center gap-1 hover:text-green-600 disabled:opacity-50 ${userVote === 1 ? 'text-green-600 font-semibold' : 'text-gray-500'}`}> {votingThisItem && userVote !== -1 ? <Loader2 size={14} className="animate-spin"/> : <ThumbsUp size={14}/>} {beta.upvotes} </button>
-                                      <button onClick={() => handleVote(beta.id, -1)} disabled={!currentUser || votingThisItem || isRemoved} className={`flex items-center gap-1 hover:text-red-600 disabled:opacity-50 ${userVote === -1 ? 'text-red-600 font-semibold' : 'text-gray-500'}`}> {votingThisItem && userVote !== 1 ? <Loader2 size={14} className="animate-spin"/> : <ThumbsDown size={14}/>} </button>
                                    </div>
                                 </div>
                              </div>
