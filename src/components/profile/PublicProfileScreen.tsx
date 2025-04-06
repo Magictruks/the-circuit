@@ -3,6 +3,7 @@ import React, { useState, useEffect, useCallback } from 'react';
     import { RouteData, AppView, UserMetadata, LogbookEntry, FollowCounts, ActivityLogDetails, NavigationData } from '../../types';
     import { supabase, followUser, unfollowUser, checkFollowing, getFollowCounts } from '../../supabaseClient';
     import type { User } from '@supabase/supabase-js';
+    import FollowListDialog from './FollowListDialog'; // Import the new dialog component
 
     // Helper functions (consider moving to utils)
     const getGradeColorClass = (colorName: string | undefined): string => {
@@ -30,6 +31,7 @@ import React, { useState, useEffect, useCallback } from 'react';
     }
 
     type PublicProfileTab = 'logbook' | 'stats';
+    type FollowDialogType = 'followers' | 'following'; // Type for dialog
 
     interface UserStats {
         totalSends: number;
@@ -65,6 +67,10 @@ import React, { useState, useEffect, useCallback } from 'react';
       const [isUpdatingFollow, setIsUpdatingFollow] = useState(false);
       const [followCounts, setFollowCounts] = useState<FollowCounts>({ followers: 0, following: 0 });
       const [isLoadingFollowCounts, setIsLoadingFollowCounts] = useState(true);
+
+      // State for Follow List Dialog
+      const [isFollowDialogVisible, setIsFollowDialogVisible] = useState(false);
+      const [followDialogType, setFollowDialogType] = useState<FollowDialogType>('followers');
 
       const profileUserId = viewingProfileId;
 
@@ -249,6 +255,8 @@ import React, { useState, useEffect, useCallback } from 'react';
         setStatsError(null);
         setLogbookCurrentPage(0); // Reset pagination
         setHasMoreLogbook(true); // Reset pagination
+        // Close dialog if open
+        setIsFollowDialogVisible(false);
 
         // Fetch data
         fetchProfileData();
@@ -298,6 +306,17 @@ import React, { useState, useEffect, useCallback } from 'react';
         if (!loadingMoreLogbook && hasMoreLogbook) {
             fetchLogbook(logbookCurrentPage + 1, true);
         }
+      };
+
+      // --- Follow Dialog Handlers ---
+      const openFollowDialog = (type: FollowDialogType) => {
+        if (!profileUserId) return;
+        setFollowDialogType(type);
+        setIsFollowDialogVisible(true);
+      };
+
+      const closeFollowDialog = () => {
+        setIsFollowDialogVisible(false);
       };
 
       // --- Rendering Functions ---
@@ -384,8 +403,12 @@ import React, { useState, useEffect, useCallback } from 'react';
                    <div className="text-sm opacity-90 mt-2 flex items-center gap-4">
                       {isLoadingFollowCounts ? <Loader2 size={14} className="animate-spin"/> : (
                          <>
-                            <span><strong className="font-bold">{followCounts.followers}</strong> Followers</span>
-                            <span><strong className="font-bold">{followCounts.following}</strong> Following</span>
+                            <button onClick={() => openFollowDialog('followers')} className="hover:underline disabled:opacity-70" disabled={isLoadingProfile || followCounts.followers === 0}>
+                               <strong className="font-bold">{followCounts.followers}</strong> Followers
+                            </button>
+                            <button onClick={() => openFollowDialog('following')} className="hover:underline disabled:opacity-70" disabled={isLoadingProfile || followCounts.following === 0}>
+                               <strong className="font-bold">{followCounts.following}</strong> Following
+                            </button>
                          </>
                       )}
                    </div>
@@ -456,6 +479,17 @@ import React, { useState, useEffect, useCallback } from 'react';
               {activeTab === 'stats' && renderStats()}
             </div>
           </main>
+
+          {/* Follow List Dialog */}
+          {isFollowDialogVisible && profileUserId && (
+            <FollowListDialog
+              userId={profileUserId}
+              dialogType={followDialogType}
+              currentUser={currentUser}
+              onClose={closeFollowDialog}
+              onNavigate={onNavigate}
+            />
+          )}
         </div>
       );
     };
