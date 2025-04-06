@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-        import { ArrowLeft, MapPin, User as SetterIcon, CalendarDays, Star, Bookmark, Video, MessageSquareText, PencilLine, ThumbsUp, ThumbsDown, Send, PlusCircle, Loader2, AlertTriangle, Save, Archive } from 'lucide-react'; // Added Archive icon
+        import { ArrowLeft, MapPin, User as SetterIcon, CalendarDays, Star, Bookmark, Video, MessageSquareText, ThumbsUp, ThumbsDown, Send, PlusCircle, Loader2, AlertTriangle, Save, Archive } from 'lucide-react'; // Removed PencilLine
         import { RouteData, UserProgress, BetaContent, Comment, BetaType, AppView, ActivityLogDetails, NavigationData } from '../../types';
         import { supabase } from '../../supabaseClient';
         import type { User } from '@supabase/supabase-js';
@@ -69,7 +69,8 @@ import React, { useState, useEffect, useCallback } from 'react';
           const [betaItems, setBetaItems] = useState<BetaContent[]>([]);
           const [isLoadingBeta, setIsLoadingBeta] = useState(false);
           const [betaError, setBetaError] = useState<string | null>(null);
-          const [activeBetaTab, setActiveBetaTab] = useState<BetaType>('text');
+          // Default to 'text' beta tab
+          const [activeBetaTab, setActiveBetaTab] = useState<Exclude<BetaType, 'drawing'>>('text');
 
           // State for Comments (fetched from DB)
           const [comments, setComments] = useState<Comment[]>([]);
@@ -161,6 +162,7 @@ import React, { useState, useEffect, useCallback } from 'react';
                 .from('route_beta')
                 .select(`*, profile:profiles ( display_name, avatar_url )`)
                 .eq('route_id', route.id)
+                .not('beta_type', 'eq', 'drawing') // Exclude drawings from fetch
                 .order('created_at', { ascending: false });
 
               if (fetchError) { setBetaError('Failed to load beta.'); setBetaItems([]); }
@@ -274,7 +276,8 @@ import React, { useState, useEffect, useCallback } from 'react';
           // Destructure route data, including location_name and removed_at
           const { id: routeId, name, grade, grade_color, location_name, setter, date_set, description, image_url, removed_at } = route;
           const displayLocation = location_name || 'Unknown Location';
-          const filteredBeta = betaItems.filter(beta => beta.beta_type === activeBetaTab);
+          // Filter beta based on the active tab *after* fetching (excluding drawings)
+          const filteredBeta = betaItems.filter(beta => beta.beta_type === activeBetaTab && beta.beta_type !== 'drawing');
           const isRemoved = !!removed_at; // Check if the route is removed
 
           return (
@@ -335,7 +338,12 @@ import React, { useState, useEffect, useCallback } from 'react';
                 {/* Community Beta Section */}
                 <section className="bg-white rounded-lg shadow">
                    <div className="flex justify-between items-center p-4 border-b"> <h2 className="text-lg font-semibold text-brand-gray">Community Beta</h2> <button onClick={() => onNavigate('addBeta', { routeId: routeId })} disabled={isRemoved} className="bg-accent-blue text-white text-xs font-semibold px-3 py-1 rounded-full hover:bg-opacity-90 flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"> <PlusCircle size={14}/> Add Beta </button> </div>
-                   <div className="flex border-b"> <button onClick={() => setActiveBetaTab('text')} className={`flex-1 py-2 text-center text-sm font-medium ${activeBetaTab === 'text' ? 'text-accent-blue border-b-2 border-accent-blue' : 'text-brand-gray hover:bg-gray-50'}`}><MessageSquareText size={16} className="inline mr-1 mb-0.5"/> Tips</button> <button onClick={() => setActiveBetaTab('video')} className={`flex-1 py-2 text-center text-sm font-medium ${activeBetaTab === 'video' ? 'text-accent-blue border-b-2 border-accent-blue' : 'text-brand-gray hover:bg-gray-50'}`}><Video size={16} className="inline mr-1 mb-0.5"/> Videos</button> <button onClick={() => setActiveBetaTab('drawing')} className={`flex-1 py-2 text-center text-sm font-medium ${activeBetaTab === 'drawing' ? 'text-accent-blue border-b-2 border-accent-blue' : 'text-brand-gray hover:bg-gray-50'}`}><PencilLine size={16} className="inline mr-1 mb-0.5"/> Drawings</button> </div>
+                   {/* Updated Tab Buttons */}
+                   <div className="flex border-b">
+                      <button onClick={() => setActiveBetaTab('text')} className={`flex-1 py-2 text-center text-sm font-medium ${activeBetaTab === 'text' ? 'text-accent-blue border-b-2 border-accent-blue' : 'text-brand-gray hover:bg-gray-50'}`}><MessageSquareText size={16} className="inline mr-1 mb-0.5"/> Tips</button>
+                      <button onClick={() => setActiveBetaTab('video')} className={`flex-1 py-2 text-center text-sm font-medium ${activeBetaTab === 'video' ? 'text-accent-blue border-b-2 border-accent-blue' : 'text-brand-gray hover:bg-gray-50'}`}><Video size={16} className="inline mr-1 mb-0.5"/> Videos</button>
+                      {/* Removed Drawings Button */}
+                   </div>
                    <div className="p-4 space-y-4 max-h-60 overflow-y-auto">
                       {isLoadingBeta && <div className="flex justify-center items-center py-4"><Loader2 className="animate-spin text-accent-blue" size={24} /></div>}
                       {betaError && <p className="text-red-500 text-sm text-center py-4">{betaError}</p>}
@@ -351,7 +359,7 @@ import React, { useState, useEffect, useCallback } from 'react';
                                      <button onClick={() => handleNavigateToProfile(beta.user_id)} disabled={isCurrentUserBeta} className={`text-sm font-medium text-brand-gray ${!isCurrentUserBeta ? 'hover:underline hover:text-accent-blue cursor-pointer' : 'cursor-default'}`}> {getUserDisplayName(beta.user_id, currentUser, beta)} </button>
                                      {beta.beta_type === 'text' && <p className="text-sm text-gray-700 mt-1">{beta.text_content}</p>}
                                      {beta.beta_type === 'video' && beta.content_url && ( <a href={beta.content_url} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline mt-1 block">Watch Video <Video size={14} className="inline ml-1"/></a> )}
-                                     {beta.beta_type === 'drawing' && beta.content_url && ( <img src={beta.content_url} alt="Drawing beta" className="mt-1 border rounded max-w-full h-auto" /> )}
+                                     {/* Removed Drawing rendering */}
                                      <div className="flex items-center gap-3 text-xs text-gray-500 mt-2">
                                         <span>{new Date(beta.created_at).toLocaleDateString()}</span>
                                         {/* Disable voting if route removed */}

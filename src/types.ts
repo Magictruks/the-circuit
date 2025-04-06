@@ -98,17 +98,17 @@ import type { User } from '@supabase/supabase-js';
           user_progress_updated_at: string; // Add updated_at from progress table for sorting
         }
 
-
-        export type BetaType = 'text' | 'video' | 'drawing'; // Drawing might be image upload initially
+        // Updated BetaType to exclude 'drawing'
+        export type BetaType = 'text' | 'video'; // Removed 'drawing'
 
         // Updated BetaContent to match route_beta table schema
         export interface BetaContent {
           id: string; // uuid from DB
           route_id: string; // uuid from DB
           user_id: string; // uuid from DB (references auth.users.id)
-          beta_type: BetaType; // text from DB ('text', 'video', 'drawing')
+          beta_type: BetaType; // text from DB ('text', 'video') - Updated
           text_content?: string | null; // text from DB (nullable)
-          content_url?: string | null; // text from DB (nullable, URL for video/drawing)
+          content_url?: string | null; // text from DB (nullable, URL for video) - Updated
           key_move?: string | null; // text from DB (nullable)
           upvotes: number; // integer from DB
           created_at: string; // timestamptz from DB
@@ -147,7 +147,7 @@ import type { User } from '@supabase/supabase-js';
 
           // Specific fields based on activity_type
           comment_snippet?: string; // for add_comment
-          beta_type?: BetaType; // for add_beta
+          beta_type?: BetaType; // for add_beta - Updated type
           attempts?: number; // for log_send
           followed_user_id?: string; // ADDED for follow_user
           followed_user_name?: string; // ADDED for follow_user
