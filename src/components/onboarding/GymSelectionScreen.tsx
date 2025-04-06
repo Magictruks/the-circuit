@@ -1,17 +1,104 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-    import { Search, CheckSquare, Square, MapPin, Loader2 } from 'lucide-react';
-    import { supabase } from '../../supabaseClient';
+    import { Search, CheckSquare, Square, MapPin, Loader2, X, Send, CheckCircle } from 'lucide-react'; // Added X, Send, CheckCircle
+    import { supabase, submitFeedback } from '../../supabaseClient'; // Import submitFeedback
     import { GymData } from '../../types';
+    import type { User } from '@supabase/supabase-js'; // Import User type
 
     interface GymSelectionScreenProps {
       preSelectedGymsIds: string[];
       onGymsSelected: (selectedGymIds: string[]) => void;
-      onNext: () => void;
+      onNext: (selectedGymIds: string[]) => void; // Pass selected IDs directly
+      currentUser: User | null; // Pass current user
     }
+
+    // Simple Modal Component (can be extracted later if needed)
+    const FeedbackModal: React.FC<{ title: string; feedbackType: 'contact' | 'suggestion'; onClose: () => void; currentUser: User | null }> = ({ title, feedbackType, onClose, currentUser }) => {
+      const [message, setMessage] = useState('');
+      const [isSubmitting, setIsSubmitting] = useState(false);
+      const [error, setError] = useState<string | null>(null);
+      const [success, setSuccess] = useState(false);
+
+      const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!message.trim() || !currentUser) {
+          setError(!currentUser ? "You must be logged in to send feedback." : "Message cannot be empty.");
+          return;
+        }
+        setIsSubmitting(true);
+        setError(null);
+        setSuccess(false);
+
+        try {
+          await submitFeedback(feedbackType, message);
+          setSuccess(true);
+          setMessage(''); // Clear message on success
+          // Optionally close modal after a delay
+          setTimeout(onClose, 2000);
+        } catch (err: any) {
+          setError(err.message || "An unexpected error occurred.");
+        } finally {
+          setIsSubmitting(false);
+        }
+      };
+
+      return (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md">
+            <div className="flex justify-between items-center p-4 border-b">
+              <h3 className="text-lg font-semibold text-brand-gray">{title}</h3>
+              <button onClick={onClose} disabled={isSubmitting} className="text-gray-400 hover:text-gray-600 disabled:opacity-50">
+                <X size={24} />
+              </button>
+            </div>
+            <form onSubmit={handleSubmit} className="p-4 space-y-4">
+              {success ? (
+                <div className="text-center py-4">
+                  <CheckCircle className="mx-auto text-green-500 mb-2" size={40} />
+                  <p className="text-brand-gray font-medium">Suggestion Sent!</p>
+                  <p className="text-sm text-gray-500">Thank you for your input.</p>
+                </div>
+              ) : (
+                <>
+                  <textarea
+                    rows={5}
+                    value={message}
+                    onChange={(e) => setMessage(e.target.value)}
+                    placeholder="Enter gym name, location, and any other details..."
+                    className="w-full p-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-accent-blue disabled:bg-gray-100"
+                    required
+                    disabled={isSubmitting || !currentUser}
+                  />
+                  {error && <p className="text-red-500 text-sm text-center">{error}</p>}
+                  {!currentUser && <p className="text-yellow-600 text-sm text-center bg-yellow-50 p-2 rounded border border-yellow-200">You must be logged in to suggest a gym.</p>}
+                  <button
+                    type="submit"
+                    disabled={isSubmitting || !message.trim() || !currentUser}
+                    className="w-full bg-accent-blue hover:bg-opacity-90 text-white font-bold py-2 px-4 rounded-md transition duration-300 flex items-center justify-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isSubmitting ? (
+                      <>
+                        <Loader2 className="animate-spin -ml-1 mr-2 h-5 w-5 text-white" />
+                        Sending...
+                      </>
+                    ) : (
+                      <>
+                        <Send size={18} />
+                        <span>Send Suggestion</span>
+                      </>
+                    )}
+                  </button>
+                </>
+              )}
+            </form>
+          </div>
+        </div>
+      );
+    };
+
 
     const GYM_PAGE_SIZE = 5; // Set page size to 5
 
-    const GymSelectionScreen: React.FC<GymSelectionScreenProps> = ({ preSelectedGymsIds, onGymsSelected, onNext }) => {
+    const GymSelectionScreen: React.FC<GymSelectionScreenProps> = ({ preSelectedGymsIds, onGymsSelected, onNext, currentUser }) => {
       const [searchTerm, setSearchTerm] = useState('');
       const [selectedGyms, setSelectedGyms] = useState<Set<string>>(new Set(preSelectedGymsIds));
       const [gyms, setGyms] = useState<GymData[]>([]); // Renamed from allGyms
@@ -20,6 +107,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
       const [error, setError] = useState<string | null>(null);
       const [currentPage, setCurrentPage] = useState(0); // 0-indexed page
       const [hasMoreGyms, setHasMoreGyms] = useState(true); // Track if more gyms are available
+      const [showSuggestionForm, setShowSuggestionForm] = useState(false); // State for suggestion modal
 
       const debounceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -28,7 +116,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
         if (loadMore) {
           setLoadingMore(true);
         } else {
-          // setLoading(true);
+          // setLoading(true); // Keep initial loading subtle
           setGyms([]); // Clear existing gyms on new search/initial load
           setCurrentPage(0); // Reset page number
           setHasMoreGyms(true); // Assume more gyms initially
@@ -114,7 +202,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
           newSelection.add(gymId);
         }
         setSelectedGyms(newSelection);
-        // onGymsSelected(Array.from(newSelection));
+        onGymsSelected(Array.from(newSelection)); // Notify parent immediately
       };
 
       // --- Handle Load More ---
@@ -125,9 +213,8 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
       };
 
       const handleOnNext = () => {
-        // onGymsSelected(Array.from(selectedGyms));
-        // setLoading(true);
-        onNext(Array.from(selectedGyms));
+        // setLoading(true); // Consider if loading state is needed here
+        onNext(Array.from(selectedGyms)); // Pass the final selection
       }
 
       return (
@@ -216,8 +303,27 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
             >
               {selectedGyms.size > 0 ? `Continue with ${selectedGyms.size} Gym(s)` : 'Select at least one gym'}
             </button>
-            <p className="text-center text-xs text-gray-400 mt-4">Can't find your gym? <button className="underline hover:text-accent-blue">Suggest it</button></p>
+            <p className="text-center text-xs text-gray-400 mt-4">
+              Can't find your gym?{' '}
+              <button
+                onClick={() => setShowSuggestionForm(true)} // Open the modal
+                className="underline hover:text-accent-blue disabled:opacity-50"
+                disabled={!currentUser} // Disable if not logged in
+              >
+                Suggest it
+              </button>
+            </p>
           </div>
+
+          {/* Suggestion Modal */}
+          {showSuggestionForm && (
+            <FeedbackModal
+              title="Suggest a Gym"
+              feedbackType="suggestion"
+              onClose={() => setShowSuggestionForm(false)}
+              currentUser={currentUser}
+            />
+          )}
         </div>
       );
     };
