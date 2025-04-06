@@ -1,5 +1,4 @@
-
-    import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
     import { ArrowLeft, MapPin, User as SetterIcon, CalendarDays, Star, Bookmark, Video, MessageSquareText, ThumbsUp, ThumbsDown, Send, PlusCircle, Loader2, AlertTriangle, Save, Archive, Key } from 'lucide-react'; // Added Key icon
     import { RouteData, UserProgress, BetaContent, Comment, BetaType, AppView, ActivityLogDetails, NavigationData } from '../../types';
     import { supabase } from '../../supabaseClient';
@@ -35,6 +34,8 @@
 
     const COMMENT_PAGE_SIZE = 5; // Number of comments per page
     const BETA_PAGE_SIZE = 2; // Number of beta items per page
+    const BETA_STORAGE_BUCKET = 'route-beta'; // Define bucket name constant
+    const SIGNED_URL_EXPIRY = 300; // Signed URL validity in seconds (e.g., 5 minutes)
 
     const getGradeColorClass = (colorName: string | undefined): string => {
       if (!colorName) return 'bg-gray-400';
@@ -74,6 +75,8 @@
       }
     };
 
+    // Extend BetaContent type locally to include optional signedUrl
+    type BetaContentWithSignedUrl = BetaContent & { signedUrl?: string };
 
     const RouteDetailScreen: React.FC<RouteDetailScreenProps> = ({ currentUser, route, isLoading, error, onBack, onNavigate }) => {
       const [progress, setProgress] = useState<UserProgress>(defaultProgress);
@@ -81,8 +84,8 @@
       const [isSavingProgress, setIsSavingProgress] = useState(false);
       const [progressError, setProgressError] = useState<string | null>(null);
 
-      // State for Beta (fetched from DB)
-      const [betaItems, setBetaItems] = useState<BetaContent[]>([]);
+      // State for Beta (fetched from DB) - Use extended type
+      const [betaItems, setBetaItems] = useState<BetaContentWithSignedUrl[]>([]);
       const [isLoadingBeta, setIsLoadingBeta] = useState(false);
       const [loadingMoreBeta, setLoadingMoreBeta] = useState(false); // Loading more state for beta
       const [betaError, setBetaError] = useState<string | null>(null);
@@ -205,7 +208,7 @@
       }, [route, isLoading, fetchComments]); // Rerun if route changes
 
 
-      // --- Fetch Beta (with pagination) ---
+      // --- Fetch Beta (with pagination and signed URLs) ---
       const fetchBeta = useCallback(async (page = 0, loadMore = false, betaType: Exclude<BetaType, 'drawing'>) => {
         if (!route) {
             setBetaItems([]); setIsLoadingBeta(false); setLoadingMoreBeta(false); setBetaError(null); setHasMoreBeta(false);
@@ -220,6 +223,7 @@
         const to = from + BETA_PAGE_SIZE - 1;
 
         try {
+          // Fetch beta data including content_url (assumed to be the path)
           const { data, error: fetchError } = await supabase
             .from('route_beta')
             .select(`*, profile:profiles ( display_name, avatar_url )`)
@@ -233,21 +237,57 @@
             if (!loadMore) setBetaItems([]);
             setHasMoreBeta(false);
           } else if (data) {
+            // Map basic data first
             const mappedBeta = data.map(beta => ({
               ...beta,
               display_name: (beta.profile as any)?.display_name || undefined,
               avatar_url: (beta.profile as any)?.avatar_url || undefined,
-            })) as BetaContent[];
+              signedUrl: undefined, // Add placeholder for signed URL
+            })) as BetaContentWithSignedUrl[];
 
-            setBetaItems(prevBeta => loadMore ? [...prevBeta, ...mappedBeta] : mappedBeta);
+            // Generate signed URLs for video items in parallel
+            const signedUrlPromises = mappedBeta
+              .filter(beta => beta.beta_type === 'video' && beta.content_url) // Filter for videos with a path
+              .map(async beta => {
+                try {
+                  // Assuming beta.content_url stores the PATH to the file
+									console.log("beta content url", beta.content_url);
+									const content_url = beta.content_url?.split('/route-beta/')[1];
+                  const { data: signedUrlData, error: signedUrlError } = await supabase
+                    .storage
+                    .from(BETA_STORAGE_BUCKET)
+                    .createSignedUrl(content_url, SIGNED_URL_EXPIRY); // Generate URL
+
+                  if (signedUrlError) {
+                    console.error(`Error generating signed URL for ${beta.content_url}:`, signedUrlError);
+                    return { id: beta.id, signedUrl: null }; // Handle error case
+                  }
+                  return { id: beta.id, signedUrl: signedUrlData.signedUrl };
+                } catch (err) {
+                  console.error(`Unexpected error generating signed URL for ${beta.content_url}:`, err);
+                  return { id: beta.id, signedUrl: null };
+                }
+              });
+
+            const signedUrlsResults = await Promise.all(signedUrlPromises);
+            const signedUrlMap = new Map(signedUrlsResults.map(item => [item.id, item.signedUrl]));
+
+            // Add signed URLs to the mappedBeta objects
+            const finalMappedBeta = mappedBeta.map(beta => ({
+              ...beta,
+              signedUrl: signedUrlMap.get(beta.id) || undefined,
+            }));
+
+            // Update state with beta items including signed URLs
+            setBetaItems(prevBeta => loadMore ? [...prevBeta, ...finalMappedBeta] : finalMappedBeta);
             setBetaCurrentPage(page);
             setHasMoreBeta(data.length === BETA_PAGE_SIZE);
 
             // Fetch votes only for the newly added beta items if loading more
-            if (loadMore && currentUser && mappedBeta.length > 0) {
-                fetchUserVotes(mappedBeta); // Fetch votes for the new items
-            } else if (!loadMore && currentUser && mappedBeta.length > 0) {
-                fetchUserVotes(mappedBeta); // Fetch votes for the initial set
+            if (loadMore && currentUser && finalMappedBeta.length > 0) {
+                fetchUserVotes(finalMappedBeta); // Fetch votes for the new items
+            } else if (!loadMore && currentUser && finalMappedBeta.length > 0) {
+                fetchUserVotes(finalMappedBeta); // Fetch votes for the initial set
             }
 
           } else {
@@ -474,7 +514,16 @@
                                 <div className="flex-grow">
                                    <button onClick={() => handleNavigateToProfile(beta.user_id)} disabled={isCurrentUserBeta} className={`text-sm font-medium text-brand-gray ${!isCurrentUserBeta ? 'hover:underline hover:text-accent-blue cursor-pointer' : 'cursor-default'}`}> {getUserDisplayName(beta.user_id, currentUser, beta)} </button>
                                    {beta.beta_type === 'text' && <p className="text-sm text-gray-700 mt-1">{beta.text_content}</p>}
-                                   {beta.beta_type === 'video' && beta.content_url && ( <a href={beta.content_url} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline mt-1 block">Watch Video <Video size={14} className="inline ml-1"/></a> )}
+                                   {/* Use signedUrl for video links */}
+                                   {beta.beta_type === 'video' && beta.signedUrl && (
+                                     <a href={beta.signedUrl} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline mt-1 block">
+                                       Watch Video <Video size={14} className="inline ml-1"/>
+                                     </a>
+                                   )}
+                                   {/* Show error if signed URL couldn't be generated */}
+                                   {beta.beta_type === 'video' && !beta.signedUrl && beta.content_url && (
+                                     <span className="text-sm text-red-500 mt-1 block">Could not load video link.</span>
+                                   )}
                                    {/* Removed Drawing rendering */}
                                    <div className="flex items-center gap-3 text-xs text-gray-500 mt-2 flex-wrap"> {/* Added flex-wrap */}
                                       <span>{new Date(beta.created_at).toLocaleDateString()}</span>
