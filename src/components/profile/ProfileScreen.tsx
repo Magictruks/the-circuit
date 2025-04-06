@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
-    import { Settings, BarChart3, ListChecks, Bookmark, MapPin, Edit3, Save, XCircle, Loader2, CheckCircle, Circle, AlertTriangle, UserPlus, UserCheck, ArrowLeft } from 'lucide-react'; // Added UserPlus, UserCheck, ArrowLeft
-    import { RouteData, AppView, UserMetadata, LogbookEntry, FollowCounts, ActivityLogDetails, NavigationData } from '../../types'; // Added FollowCounts, ActivityLogDetails, NavigationData
-    import { supabase, followUser, unfollowUser, checkFollowing, getFollowCounts } from '../../supabaseClient'; // Import follow/unfollow functions
+    import { Settings, BarChart3, ListChecks, Bookmark, MapPin, Edit3, Save, XCircle, Loader2, CheckCircle, Circle, AlertTriangle, UserPlus, UserCheck, ArrowLeft } from 'lucide-react';
+    import { RouteData, AppView, UserMetadata, LogbookEntry, FollowCounts, ActivityLogDetails, NavigationData } from '../../types';
+    import { supabase, followUser, unfollowUser, checkFollowing, getFollowCounts } from '../../supabaseClient';
     import type { User } from '@supabase/supabase-js';
 
+    // Helper functions (keep as is)
     const getGradeColorClass = (colorName: string | undefined): string => {
       if (!colorName) return 'bg-gray-400';
       const colorMap: { [key: string]: string } = { 'accent-red': 'bg-accent-red', 'accent-blue': 'bg-accent-blue', 'accent-yellow': 'bg-accent-yellow', 'brand-green': 'bg-brand-green', 'accent-purple': 'bg-accent-purple', 'brand-gray': 'bg-brand-gray', 'brand-brown': 'bg-brand-brown' };
@@ -20,12 +21,13 @@ import React, { useState, useEffect, useCallback } from 'react';
         return -1;
     };
 
-
     interface ProfileScreenProps {
-       currentUser: User | null; // The logged-in user
-       viewingProfileId: string | null; // The ID of the profile being viewed (null if viewing own)
-       onNavigate: (view: AppView, data?: NavigationData) => void; // Use NavigationData
+       currentUser: User | null;
+       viewingProfileId: string | null;
+       onNavigate: (view: AppView, data?: NavigationData) => void;
        getGymNameById: (id: string | null) => string;
+       // Add previousAppView if needed for back navigation logic within ProfileScreen itself
+       // previousAppView?: AppView;
     }
 
     type ProfileTab = 'logbook' | 'wishlist' | 'stats';
@@ -36,9 +38,9 @@ import React, { useState, useEffect, useCallback } from 'react';
         highestGrade: string | null;
     }
 
-    const ProfileScreen: React.FC<ProfileScreenProps> = ({ currentUser, viewingProfileId, onNavigate, getGymNameById }) => {
-      const [profileData, setProfileData] = useState<UserMetadata | null>(null); // Data of the profile being viewed
-      const [isLoadingProfile, setIsLoadingProfile] = useState(true);
+    const ProfileScreen: React.FC<ProfileScreenProps> = ({ currentUser, viewingProfileId, onNavigate, getGymNameById /*, previousAppView */ }) => {
+      const [profileData, setProfileData] = useState<UserMetadata | null>(null);
+      const [isLoadingProfile, setIsLoadingProfile] = useState(true); // Still track loading for header
       const [profileError, setProfileError] = useState<string | null>(null);
 
       const [activeTab, setActiveTab] = useState<ProfileTab>('logbook');
@@ -49,25 +51,25 @@ import React, { useState, useEffect, useCallback } from 'react';
 
       // State for Logbook
       const [logbookEntries, setLogbookEntries] = useState<LogbookEntry[]>([]);
-      const [isLoadingLogbook, setIsLoadingLogbook] = useState(false);
+      const [isLoadingLogbook, setIsLoadingLogbook] = useState(true); // Start as true
       const [logbookError, setLogbookError] = useState<string | null>(null);
 
       // State for Wishlist
       const [wishlistItems, setWishlistItems] = useState<RouteData[]>([]);
-      const [isLoadingWishlist, setIsLoadingWishlist] = useState(false);
+      const [isLoadingWishlist, setIsLoadingWishlist] = useState(true); // Start as true
       const [wishlistError, setWishlistError] = useState<string | null>(null);
 
       // State for Stats
       const [userStats, setUserStats] = useState<UserStats | null>(null);
-      const [isLoadingStats, setIsLoadingStats] = useState(false);
+      const [isLoadingStats, setIsLoadingStats] = useState(true); // Start as true
       const [statsError, setStatsError] = useState<string | null>(null);
 
       // State for Following
       const [isFollowing, setIsFollowing] = useState(false);
-      const [isLoadingFollowStatus, setIsLoadingFollowStatus] = useState(false);
+      const [isLoadingFollowStatus, setIsLoadingFollowStatus] = useState(true); // Start as true
       const [isUpdatingFollow, setIsUpdatingFollow] = useState(false);
       const [followCounts, setFollowCounts] = useState<FollowCounts>({ followers: 0, following: 0 });
-      const [isLoadingFollowCounts, setIsLoadingFollowCounts] = useState(false);
+      const [isLoadingFollowCounts, setIsLoadingFollowCounts] = useState(true); // Start as true
 
       // Determine the actual user ID to fetch data for
       const profileUserId = viewingProfileId || currentUser?.id;
@@ -77,7 +79,6 @@ import React, { useState, useEffect, useCallback } from 'react';
       const fetchProfileData = useCallback(async () => {
         if (!profileUserId) {
           setProfileData(null); setIsLoadingProfile(false); setProfileError("No user ID provided.");
-          setLogbookEntries([]); setWishlistItems([]); setUserStats(null); setFollowCounts({ followers: 0, following: 0 });
           return;
         }
         setIsLoadingProfile(true); setProfileError(null);
@@ -89,6 +90,7 @@ import React, { useState, useEffect, useCallback } from 'react';
             setProfileData(null);
           } else {
             setProfileData(data);
+            setEditDisplayName(data?.display_name || ''); // Initialize edit name here
           }
         } catch (err: any) {
           console.error("Unexpected error fetching profile:", err);
@@ -108,7 +110,6 @@ import React, { useState, useEffect, useCallback } from 'react';
           setIsFollowing(followingStatus);
         } catch (error) {
           console.error("Error checking follow status:", error);
-          // Optionally set an error state here
         } finally {
           setIsLoadingFollowStatus(false);
         }
@@ -123,12 +124,10 @@ import React, { useState, useEffect, useCallback } from 'react';
           setFollowCounts({ followers: counts.followers, following: counts.following });
         } catch (error) {
           console.error("Error fetching follow counts:", error);
-          // Optionally set an error state
         } finally {
           setIsLoadingFollowCounts(false);
         }
       }, [profileUserId]);
-
 
       // --- Fetch Logbook Data ---
       const fetchLogbook = useCallback(async () => {
@@ -144,7 +143,7 @@ import React, { useState, useEffect, useCallback } from 'react';
                 location_name:locations ( name )
               )
             `)
-            .eq('user_id', profileUserId) // Use profileUserId
+            .eq('user_id', profileUserId)
             .or('sent_at.not.is.null,attempts.gt.0')
             .order('updated_at', { ascending: false });
 
@@ -178,7 +177,7 @@ import React, { useState, useEffect, useCallback } from 'react';
         } finally {
           setIsLoadingLogbook(false);
         }
-      }, [profileUserId]); // Depend on profileUserId
+      }, [profileUserId]);
 
       // --- Fetch Wishlist Data ---
       const fetchWishlist = useCallback(async () => {
@@ -193,7 +192,7 @@ import React, { useState, useEffect, useCallback } from 'react';
                 location_name:locations ( name )
               )
             `)
-            .eq('user_id', profileUserId) // Use profileUserId
+            .eq('user_id', profileUserId)
             .eq('wishlist', true)
             .order('created_at', { referencedTable: 'routes', ascending: false });
 
@@ -221,7 +220,7 @@ import React, { useState, useEffect, useCallback } from 'react';
         } finally {
           setIsLoadingWishlist(false);
         }
-      }, [profileUserId]); // Depend on profileUserId
+      }, [profileUserId]);
 
       // --- Fetch Stats Data ---
       const fetchStats = useCallback(async () => {
@@ -231,7 +230,7 @@ import React, { useState, useEffect, useCallback } from 'react';
               const { data, error } = await supabase
                   .from('user_route_progress')
                   .select(` route_id, route:routes ( grade ) `)
-                  .eq('user_id', profileUserId) // Use profileUserId
+                  .eq('user_id', profileUserId)
                   .not('sent_at', 'is', null);
 
               if (error) {
@@ -266,19 +265,30 @@ import React, { useState, useEffect, useCallback } from 'react';
           } finally {
               setIsLoadingStats(false);
           }
-      }, [profileUserId]); // Depend on profileUserId
-
+      }, [profileUserId]);
 
       // Fetch all data when profileUserId changes
       useEffect(() => {
+        // Reset loading states when ID changes
+        setIsLoadingProfile(true);
+        setIsLoadingLogbook(true);
+        setIsLoadingWishlist(true);
+        setIsLoadingStats(true);
+        setIsLoadingFollowStatus(true);
+        setIsLoadingFollowCounts(true);
+        setProfileError(null);
+        setLogbookError(null);
+        setWishlistError(null);
+        setStatsError(null);
+
+        // Fetch data
         fetchProfileData();
         fetchFollowStatus();
         fetchFollowCounts();
         fetchLogbook();
         fetchWishlist();
         fetchStats();
-      }, [profileUserId, fetchProfileData, fetchFollowStatus, fetchFollowCounts, fetchLogbook, fetchWishlist, fetchStats]); // Add profileUserId dependency
-
+      }, [profileUserId, fetchProfileData, fetchFollowStatus, fetchFollowCounts, fetchLogbook, fetchWishlist, fetchStats]);
 
       // --- Handlers ---
       const handleEditClick = () => { setEditError(null); setEditDisplayName(profileData?.display_name || ''); setIsEditing(true); };
@@ -296,12 +306,14 @@ import React, { useState, useEffect, useCallback } from 'react';
             const { error: authUpdateError } = await supabase.auth.updateUser({ data: { display_name: trimmedName } });
             if (authUpdateError) { console.error("Auth metadata update failed after profile update:", authUpdateError); throw new Error(`Auth update failed: ${authUpdateError.message}. Profile might be updated.`); }
             console.log("Profile and auth metadata updated successfully.");
-            // Refetch profile data to show the update
-            await fetchProfileData();
+            // Update local state immediately for responsiveness
+            setProfileData(prev => prev ? { ...prev, display_name: trimmedName } : null);
             setIsEditing(false);
         } catch (error: any) {
             console.error("Error saving display name:", error);
             setEditError(`Failed to update name: ${error.message}`);
+            // Optionally refetch profile data on error to revert
+            // await fetchProfileData();
         } finally {
             setIsSaving(false);
         }
@@ -315,22 +327,18 @@ import React, { useState, useEffect, useCallback } from 'react';
           if (isFollowing) {
             await unfollowUser(currentUser.id, profileUserId);
             setIsFollowing(false);
-            // Decrement follower count locally for immediate feedback
             setFollowCounts(prev => ({ ...prev, followers: Math.max(0, prev.followers - 1) }));
           } else {
             await followUser(currentUser.id, profileUserId);
             setIsFollowing(true);
-            // Increment follower count locally
             setFollowCounts(prev => ({ ...prev, followers: prev.followers + 1 }));
-
-            // Log follow activity
             const activityDetails: ActivityLogDetails = {
                 followed_user_id: profileUserId,
-                followed_user_name: profileData?.display_name || 'User', // Use fetched profile name
+                followed_user_name: profileData?.display_name || 'User',
             };
             const { error: logError } = await supabase.from('activity_log').insert({
                 user_id: currentUser.id,
-                gym_id: profileData?.current_gym_id, // Log against the followed user's current gym? Or null?
+                gym_id: profileData?.current_gym_id,
                 activity_type: 'follow_user',
                 details: activityDetails,
             });
@@ -338,15 +346,12 @@ import React, { useState, useEffect, useCallback } from 'react';
           }
         } catch (error: any) {
           console.error("Error updating follow status:", error);
-          // Optionally show an error message to the user
-          // Re-fetch status on error to be safe
           await fetchFollowStatus();
-          await fetchFollowCounts(); // Re-fetch counts on error too
+          await fetchFollowCounts();
         } finally {
           setIsUpdatingFollow(false);
         }
       };
-
 
       // --- Rendering Functions ---
       const renderLogbookItem = (entry: LogbookEntry) => {
@@ -392,14 +397,27 @@ import React, { useState, useEffect, useCallback } from 'react';
       // --- End Rendering Functions ---
 
       // --- Loading / Error States for Profile ---
-      if (isLoadingProfile) { return <div className="min-h-screen flex items-center justify-center"><Loader2 className="animate-spin text-accent-blue" size={32} /></div>; }
-      if (profileError) { return <div className="min-h-screen flex items-center justify-center p-4 text-center text-red-500"><AlertTriangle size={24} className="mb-2"/>{profileError}</div>; }
-      if (!profileData) { return <div className="min-h-screen flex items-center justify-center p-4 text-center text-brand-gray">Profile data could not be loaded.</div>; }
+      // REMOVED the top-level loading check that caused the black screen
+      // if (isLoadingProfile) { return <div className="min-h-screen flex items-center justify-center"><Loader2 className="animate-spin text-accent-blue" size={32} /></div>; }
+
+      // Handle profile-specific errors after the main layout renders
+      if (profileError) {
+        return (
+          <div className="min-h-screen bg-gray-100 flex flex-col items-center justify-center p-4 text-center">
+            <AlertTriangle size={48} className="text-red-500 mb-4" />
+            <h2 className="text-xl font-semibold text-brand-gray mb-2">Error Loading Profile</h2>
+            <p className="text-red-600 mb-6">{profileError}</p>
+            {/* Provide a way back if possible */}
+            {/* <button onClick={() => onNavigate(previousAppView || 'dashboard')} className="mt-4 text-sm text-accent-blue underline">Go Back</button> */}
+          </div>
+        );
+      }
       // --- End Loading / Error States ---
 
-      const currentDisplayName = profileData.display_name || 'Climber';
-      const userAvatar = profileData.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(currentDisplayName)}&background=random&color=fff`;
-      const userHomeGymIds = profileData.selected_gym_ids || [];
+      // Use placeholder data while loading profile details for the header
+      const currentDisplayName = isLoadingProfile ? 'Loading...' : (profileData?.display_name || 'Climber');
+      const userAvatar = isLoadingProfile ? '' : (profileData?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(currentDisplayName)}&background=random&color=fff`);
+      const userHomeGymIds = isLoadingProfile ? [] : (profileData?.selected_gym_ids || []);
 
       return (
         <div className="min-h-screen bg-gray-100 pb-16">
@@ -407,7 +425,7 @@ import React, { useState, useEffect, useCallback } from 'react';
           <header className="bg-gradient-to-r from-brand-green to-brand-gray p-4 pt-8 pb-20 text-white relative">
              {/* Back Button for non-own profiles */}
              {!isOwnProfile && (
-                <button onClick={() => onNavigate(previousAppView || 'dashboard')} className="absolute top-4 left-4 text-white/80 hover:text-white z-10">
+                <button onClick={() => onNavigate('discover')} /* Simplified back for now */ className="absolute top-4 left-4 text-white/80 hover:text-white z-10">
                    <ArrowLeft size={24} />
                 </button>
              )}
@@ -419,9 +437,17 @@ import React, { useState, useEffect, useCallback } from 'react';
              )}
 
              <div className="flex items-center gap-4 relative z-0">
-                <img src={userAvatar} alt={currentDisplayName} className="w-20 h-20 rounded-full border-4 border-white shadow-lg object-cover bg-gray-300" />
+                {/* Avatar: Show placeholder or actual image */}
+                {isLoadingProfile ? (
+                  <div className="w-20 h-20 rounded-full border-4 border-white shadow-lg bg-gray-300 animate-pulse"></div>
+                ) : (
+                  <img src={userAvatar} alt={currentDisplayName} className="w-20 h-20 rounded-full border-4 border-white shadow-lg object-cover bg-gray-300" />
+                )}
                 <div className="flex-grow min-w-0">
-                   {isEditing && isOwnProfile ? (
+                   {/* Display Name: Show loading or actual name/edit input */}
+                   {isLoadingProfile ? (
+                     <div className="h-8 bg-white/30 rounded w-3/4 animate-pulse mb-1"></div>
+                   ) : isEditing && isOwnProfile ? (
                      <div className="relative">
                        <input type="text" value={editDisplayName} onChange={(e) => setEditDisplayName(e.target.value)} className="text-2xl font-bold bg-transparent border-b-2 border-white/50 focus:border-white outline-none text-white w-full pr-16" autoFocus maxLength={50} disabled={isSaving} />
                        <div className="absolute top-0 right-0 flex gap-1 items-center h-full">
@@ -436,8 +462,16 @@ import React, { useState, useEffect, useCallback } from 'react';
                         {isOwnProfile && <button onClick={handleEditClick} className="text-white/70 hover:text-white flex-shrink-0"> <Edit3 size={18} /> </button>}
                      </div>
                    )}
-                   <div className="text-sm opacity-90 mt-1 flex items-start gap-1"> <MapPin size={14} className="mt-0.5 flex-shrink-0"/> <span className="truncate"> {userHomeGymIds.length > 0 ? userHomeGymIds.map(id => getGymNameById(id)).join(', ') : 'No gyms selected'} </span> </div>
-                   {/* Follow Counts */}
+                   {/* Gym Info: Show loading or actual gyms */}
+                   {isLoadingProfile ? (
+                     <div className="h-4 bg-white/30 rounded w-1/2 animate-pulse mt-1"></div>
+                   ) : (
+                     <div className="text-sm opacity-90 mt-1 flex items-start gap-1">
+                       <MapPin size={14} className="mt-0.5 flex-shrink-0"/>
+                       <span className="truncate"> {userHomeGymIds.length > 0 ? userHomeGymIds.map(id => getGymNameById(id)).join(', ') : 'No gyms selected'} </span>
+                     </div>
+                   )}
+                   {/* Follow Counts: Show loading or actual counts */}
                    <div className="text-sm opacity-90 mt-2 flex items-center gap-4">
                       {isLoadingFollowCounts ? <Loader2 size={14} className="animate-spin"/> : (
                          <>
@@ -453,7 +487,7 @@ import React, { useState, useEffect, useCallback } from 'react';
                 <div className="absolute bottom-4 right-4 z-10">
                    <button
                       onClick={handleFollowToggle}
-                      disabled={isLoadingFollowStatus || isUpdatingFollow}
+                      disabled={isLoadingFollowStatus || isUpdatingFollow || isLoadingProfile} // Disable while profile loads too
                       className={`px-4 py-1.5 rounded-full text-sm font-semibold transition-colors duration-200 flex items-center gap-1.5 disabled:opacity-60 ${
                          isFollowing
                             ? 'bg-white text-brand-green hover:bg-gray-200'
@@ -473,7 +507,7 @@ import React, { useState, useEffect, useCallback } from 'react';
           </header>
 
           {/* Main Content Area */}
-          <main className="p-4 -mt-12 relative z-0"> {/* Adjusted negative margin */}
+          <main className="p-4 -mt-12 relative z-0">
             {/* Tab Navigation */}
             <div className="bg-white rounded-lg shadow mb-4 flex">
                <button onClick={() => setActiveTab('logbook')} className={`flex-1 py-3 text-center text-sm font-medium flex items-center justify-center gap-1 ${activeTab === 'logbook' ? 'text-accent-blue border-b-2 border-accent-blue' : 'text-brand-gray hover:bg-gray-50 rounded-t-lg'}`}> <ListChecks size={16}/> Logbook </button>
@@ -483,8 +517,35 @@ import React, { useState, useEffect, useCallback } from 'react';
 
             {/* Tab Content */}
             <div className="bg-white rounded-lg shadow min-h-[200px]">
-              {activeTab === 'logbook' && ( <div> {isLoadingLogbook ? ( <div className="flex justify-center items-center p-6"> <Loader2 className="animate-spin text-accent-blue mr-2" size={24} /> Loading logbook... </div> ) : logbookError ? ( <p className="text-center text-red-500 p-6">{logbookError}</p> ) : logbookEntries.length > 0 ? ( logbookEntries.map(renderLogbookItem) ) : ( <p className="text-center text-gray-500 p-6">No climbs logged yet.</p> )} </div> )}
-              {activeTab === 'wishlist' && isOwnProfile && ( <div> {isLoadingWishlist ? ( <div className="flex justify-center items-center p-6"> <Loader2 className="animate-spin text-accent-blue mr-2" size={24} /> Loading wishlist... </div> ) : wishlistError ? ( <p className="text-center text-red-500 p-6">{wishlistError}</p> ) : wishlistItems.length > 0 ? ( wishlistItems.map(renderWishlistItem) ) : ( <p className="text-center text-gray-500 p-6">Your wishlist is empty.</p> )} </div> )}
+              {/* Logbook Tab */}
+              {activeTab === 'logbook' && (
+                <div>
+                  {isLoadingLogbook ? (
+                    <div className="flex justify-center items-center p-6"> <Loader2 className="animate-spin text-accent-blue mr-2" size={24} /> Loading logbook... </div>
+                  ) : logbookError ? (
+                    <p className="text-center text-red-500 p-6">{logbookError}</p>
+                  ) : logbookEntries.length > 0 ? (
+                    logbookEntries.map(renderLogbookItem)
+                  ) : (
+                    <p className="text-center text-gray-500 p-6">No climbs logged yet.</p>
+                  )}
+                </div>
+              )}
+              {/* Wishlist Tab */}
+              {activeTab === 'wishlist' && isOwnProfile && (
+                <div>
+                  {isLoadingWishlist ? (
+                    <div className="flex justify-center items-center p-6"> <Loader2 className="animate-spin text-accent-blue mr-2" size={24} /> Loading wishlist... </div>
+                  ) : wishlistError ? (
+                    <p className="text-center text-red-500 p-6">{wishlistError}</p>
+                  ) : wishlistItems.length > 0 ? (
+                    wishlistItems.map(renderWishlistItem)
+                  ) : (
+                    <p className="text-center text-gray-500 p-6">Your wishlist is empty.</p>
+                  )}
+                </div>
+              )}
+              {/* Stats Tab */}
               {activeTab === 'stats' && renderStats()}
             </div>
           </main>
