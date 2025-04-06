@@ -67,29 +67,29 @@ import React from 'react';
                     {/* Status & Info Icons */}
                     <div className={`flex flex-col items-end ${iconSpacing} flex-shrink-0 ml-auto pl-2`}>
                       {/* Row 1: Beta, Comments, and Average Rating */}
-                      <div className="flex flex-row h-5 mb-1 gap-x-2"> {/* Reserve space even if no icon, add margin bottom */}
+											{textBetaCount || videoBetaCount || ratingCount ? (<div className="flex flex-row h-5 mb-1 gap-x-2"> {/* Reserve space even if no icon, add margin bottom */}
                         {/* Separate Beta Icons */}
-                        {textBetaCount && textBetaCount > 0 && (
+                        {textBetaCount && textBetaCount > 0 ? (
                           <span className="flex items-center text-blue-500" title={`${textBetaCount} Text Beta`}>
                             <MessageSquareText size={iconSize} />
                             <span className="text-xs ml-0.5">{textBetaCount}</span>
                           </span>
-                        )}
-                        {videoBetaCount && videoBetaCount > 0 && (
+                        ) : null}
+                        {videoBetaCount && videoBetaCount > 0 ? (
                           <span className="flex items-center text-purple-500" title={`${videoBetaCount} Video Beta`}>
                             <Video size={iconSize} />
                             <span className="text-xs ml-0.5">{videoBetaCount}</span>
                           </span>
-                        )}
+                        ) : null}
                         {/* UPDATED: Average Rating Icon */}
-                        {ratingCount && ratingCount > 0 && (
+                        {ratingCount && ratingCount > 0 ? (
                            <span className="flex items-center text-yellow-500" title={`Average Rating Available (${ratingCount} ratings)`}>
                               <Star size={iconSize} />
 														 <span className="text-xs ml-0.5">{averageRating?.toFixed(1)}</span>
                               {/* Optional: Display average value: <span className="text-xs ml-0.5">{averageRating?.toFixed(1)}</span> */}
                            </span>
-                        )}
-                      </div>
+                        ) : null}
+                      </div>) : null}
 
                       {/* Row 2: Progress Status */}
                       <div className={`flex flex-row ${iconSpacing} h-5`}> {/* Reserve space */}
