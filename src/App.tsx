@@ -254,8 +254,9 @@ import React, { useState, useEffect, useCallback } from 'react';
             finally { setIsLoadingData(false); }
           };
 
-          const handleGymSelectionComplete = async () => {
-            if (selectedGymIds.length > 0 && currentUser) { const firstGym = selectedGymIds[0]; const currentGymToSet = activeGymId && selectedGymIds.includes(activeGymId) ? activeGymId : firstGym; await persistGymSelection(currentUser.id, selectedGymIds, currentGymToSet); }
+          const handleGymSelectionComplete = async (gymIds: string[]) => {
+            console.log(`Gym selection complete. Selected gyms: ${gymIds.join(', ')}`);
+            if (gymIds.length > 0 && currentUser) { const firstGym = gymIds[0]; const currentGymToSet = activeGymId && gymIds.includes(activeGymId) ? activeGymId : firstGym; await persistGymSelection(currentUser.id, gymIds, currentGymToSet); }
             else if (!currentUser) { alert("Error: User session not found. Please try logging in again."); handleLogout(); }
             else { alert("Please select at least one gym."); }
           };

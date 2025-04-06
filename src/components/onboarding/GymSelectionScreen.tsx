@@ -15,7 +15,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
       const [searchTerm, setSearchTerm] = useState('');
       const [selectedGyms, setSelectedGyms] = useState<Set<string>>(new Set(preSelectedGymsIds));
       const [gyms, setGyms] = useState<GymData[]>([]); // Renamed from allGyms
-      const [loading, setLoading] = useState(true);
+      const [loading, setLoading] = useState(false);
       const [loadingMore, setLoadingMore] = useState(false); // State for loading more gyms
       const [error, setError] = useState<string | null>(null);
       const [currentPage, setCurrentPage] = useState(0); // 0-indexed page
@@ -28,7 +28,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
         if (loadMore) {
           setLoadingMore(true);
         } else {
-          setLoading(true);
+          // setLoading(true);
           setGyms([]); // Clear existing gyms on new search/initial load
           setCurrentPage(0); // Reset page number
           setHasMoreGyms(true); // Assume more gyms initially
@@ -72,7 +72,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
           if (!loadMore) setGyms([]);
           setHasMoreGyms(false);
         } finally {
-          setLoading(false);
+          // setLoading(false);
           setLoadingMore(false);
         }
       }, [searchTerm]); // Include searchTerm dependency
@@ -114,7 +114,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
           newSelection.add(gymId);
         }
         setSelectedGyms(newSelection);
-        onGymsSelected(Array.from(newSelection));
+        // onGymsSelected(Array.from(newSelection));
       };
 
       // --- Handle Load More ---
@@ -123,6 +123,12 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
           fetchGyms(currentPage + 1, true, searchTerm); // Fetch next page, indicate loading more
         }
       };
+
+      const handleOnNext = () => {
+        // onGymsSelected(Array.from(selectedGyms));
+        // setLoading(true);
+        onNext(Array.from(selectedGyms));
+      }
 
       return (
         <div className="min-h-screen bg-gray-50 flex flex-col items-center p-4 pt-12">
@@ -200,7 +206,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 
             {/* Action Button */}
             <button
-              onClick={onNext}
+              onClick={handleOnNext}
               disabled={selectedGyms.size === 0 || loading || !!error} // Disable if initially loading
               className={`w-full font-bold py-3 px-6 rounded-lg transition duration-300 shadow-lg ${
                 selectedGyms.size > 0 && !loading && !error
