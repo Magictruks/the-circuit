@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
               import { Search, SlidersHorizontal, ChevronDown, Loader2, MapPin } from 'lucide-react';
               import RouteCard from './RouteCard';
-              import { RouteData, AppView, UserRouteProgressData, LocationData, RouteCardStatsResult } from '../../types'; // Import RouteCardStatsResult
+              import { RouteData, AppView, UserRouteProgressData, LocationData, RouteCardStatsResult } from '../../types';
               import { supabase } from '../../supabaseClient';
               import type { User } from '@supabase/supabase-js';
 
@@ -22,7 +22,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
               };
 
               type RouteStatusFilter = 'all' | 'sent' | 'attempted' | 'unseen' | 'wishlist';
-              type SortOption = 'date_newest' | 'grade_hardest' | 'grade_easiest' | 'rating_highest'; // Keep rating_highest for now, might adjust later
+              type SortOption = 'date_newest' | 'grade_hardest' | 'grade_easiest' | 'rating_highest';
 
               // Helper to get numeric value for V-grades (consider moving to utils)
               const getVGradeValue = (grade: string): number => {
@@ -46,17 +46,17 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
               }) => {
                 const [searchTerm, setSearchTerm] = useState(initialSearchTerm || '');
                 const [showFilters, setShowFilters] = useState(false);
+                // baseRoutes now holds the filtered/sorted routes from the DB for the current page
                 const [baseRoutes, setBaseRoutes] = useState<RouteData[]>([]);
                 const [userProgressMap, setUserProgressMap] = useState<Map<string, UserRouteProgressData>>(new Map());
-                // UPDATED: State to store combined route stats
                 const [routeStatsMap, setRouteStatsMap] = useState<Map<string, RouteStats>>(new Map());
                 const [commentCountsMap, setCommentCountsMap] = useState<Map<string, number>>(new Map());
                 const [gymLocations, setGymLocations] = useState<LocationData[]>([]);
                 const [loading, setLoading] = useState(false);
-                const [loadingMoreRoutes, setLoadingMoreRoutes] = useState(false); // State for loading more routes
+                const [loadingMoreRoutes, setLoadingMoreRoutes] = useState(false);
                 const [error, setError] = useState<string | null>(null);
-                const [currentPage, setCurrentPage] = useState(0); // Track current page (0-indexed)
-                const [hasMoreRoutes, setHasMoreRoutes] = useState(true); // Track if more routes might exist
+                const [currentPage, setCurrentPage] = useState(0);
+                const [hasMoreRoutes, setHasMoreRoutes] = useState(true);
 
                 // Filter States
                 const [selectedLocationFilter, setSelectedLocationFilter] = useState<string>('');
@@ -66,6 +66,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 
                 const searchInputRef = useRef<HTMLInputElement>(null);
                 const [didFocusOnMount, setDidFocusOnMount] = useState(false);
+                const debounceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
                 useEffect(() => {
                   setSearchTerm(initialSearchTerm || '');
@@ -80,10 +81,10 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
                   }
                 }, [initialSearchTerm, didFocusOnMount]);
 
-                // --- Fetch Route Data (with pagination) ---
+                // --- Fetch Route Data (using RPC for filtering/sorting) ---
                 const fetchAllRouteData = useCallback(async (page = 0, loadMore = false) => {
                   if (!activeGymId) {
-                    setBaseRoutes([]); setUserProgressMap(new Map()); setRouteStatsMap(new Map()); // UPDATED
+                    setBaseRoutes([]); setUserProgressMap(new Map()); setRouteStatsMap(new Map());
                     setCommentCountsMap(new Map()); setGymLocations([]); setError(null);
                     setLoading(false); setLoadingMoreRoutes(false); setHasMoreRoutes(false);
                     return;
@@ -92,13 +93,12 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
                   if (loadMore) { setLoadingMoreRoutes(true); }
                   else {
                     setLoading(true); setBaseRoutes([]); setCurrentPage(0); setHasMoreRoutes(true);
-                    // Reset auxiliary maps on initial load/filter change
-                    setUserProgressMap(new Map()); setRouteStatsMap(new Map()); setCommentCountsMap(new Map()); // UPDATED
+                    // Reset auxiliary maps only if not loading more
+                    setUserProgressMap(new Map()); setRouteStatsMap(new Map()); setCommentCountsMap(new Map());
                   }
                   setError(null);
 
-                  const from = page * ROUTE_PAGE_SIZE;
-                  const to = from + ROUTE_PAGE_SIZE - 1;
+                  const offset = page * ROUTE_PAGE_SIZE;
 
                   try {
                     // Fetch locations only on initial load (page 0)
@@ -109,77 +109,93 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
                       else setGymLocations(locationsData || []);
                     }
 
-                    // Fetch only routes that are NOT removed, using pagination
-                    const { data: routesData, error: routesError } = await supabase
-                      .from('routes')
-                      .select(`*, location_name:locations ( name )`)
-                      .eq('gym_id', activeGymId)
-                      .is('removed_at', null) // Filter out removed routes
-                      .order('date_set', { ascending: false }) // Keep default sort for pagination
-                      .range(from, to); // Apply pagination
+                    // Call the RPC function with filters and pagination
+                    const { data: routesData, error: routesError } = await supabase.rpc('get_filtered_routes', {
+                      gym_id_in: activeGymId,
+                      search_term_in: searchTerm || null,
+                      location_id_in: selectedLocationFilter || null,
+                      grade_in: selectedGradeFilter || null,
+                      // Pass sort option only if it's NOT rating_highest (handled client-side)
+                      sort_option_in: selectedSortOption !== 'rating_highest' ? selectedSortOption : 'date_newest', // Default sort if rating_highest
+                      page_size_in: ROUTE_PAGE_SIZE,
+                      page_offset_in: offset
+                    });
 
-                    if (routesError) throw new Error(`Failed to load routes: ${routesError.message}`);
+                    if (routesError) throw new Error(`Failed to load routes via RPC: ${routesError.message}`);
 
                     if (!routesData || routesData.length === 0) {
-                      if (!loadMore) setBaseRoutes([]); // Clear if initial load yields nothing
-                      setHasMoreRoutes(false); // No more routes to load
+                      if (!loadMore) setBaseRoutes([]);
+                      setHasMoreRoutes(false);
                       setLoading(false); setLoadingMoreRoutes(false);
                       return;
                     }
 
-                    const mappedRoutes = routesData.map(r => ({ ...r, location_name: (r.location_name as any)?.name || null })) as RouteData[];
+                    // The RPC returns the basic route data, already filtered/sorted (except status/rating sort)
+                    const mappedRoutes = routesData as RouteData[];
 
                     // Append or replace routes based on loadMore flag
                     setBaseRoutes(prevRoutes => loadMore ? [...prevRoutes, ...mappedRoutes] : mappedRoutes);
                     setCurrentPage(page);
-                    setHasMoreRoutes(mappedRoutes.length === ROUTE_PAGE_SIZE); // Check if a full page was fetched
+                    setHasMoreRoutes(mappedRoutes.length === ROUTE_PAGE_SIZE);
 
-                    const routeIds = mappedRoutes.map(r => r.id); // IDs from the *current* page fetch
+                    const routeIds = mappedRoutes.map(r => r.id);
 
-                    // Fetch auxiliary data only for the newly loaded routes if loading more
-                    // Or for all routes if initial load
-                    const idsToFetchAuxData = loadMore ? routeIds : baseRoutes.map(r => r.id).concat(routeIds);
+                    // Fetch auxiliary data (progress, stats, comments) for the *current page's routes*
+                    // We need to merge this data later in the useMemo hook
 
-                    let progressMap = loadMore ? new Map(userProgressMap) : new Map<string, UserRouteProgressData>();
-                    if (currentUser && idsToFetchAuxData.length > 0) {
+                    // Fetch User Progress for current page routes
+                    if (currentUser && routeIds.length > 0) {
                       const { data: progressData, error: progressError } = await supabase
-                        .from('user_route_progress').select('*').eq('user_id', currentUser.id).in('route_id', idsToFetchAuxData);
+                        .from('user_route_progress').select('*').eq('user_id', currentUser.id).in('route_id', routeIds);
                       if (progressError) console.error('[RoutesScreen] Error fetching user progress:', progressError.message);
-                      else if (progressData) progressData.forEach(p => progressMap.set(p.route_id, p));
-                      setUserProgressMap(progressMap); // Update the map
-                    }
-
-                    // UPDATED: Fetch combined stats using the new RPC function
-                    let statsMap = loadMore ? new Map(routeStatsMap) : new Map<string, RouteStats>();
-                    if (idsToFetchAuxData.length > 0) {
-                      const { data: statsData, error: statsError } = await supabase.rpc('get_route_card_stats', { route_ids: idsToFetchAuxData });
-                      if (statsError) console.error('[RoutesScreen] Error fetching route card stats via RPC:', statsError.message);
-                      else if (statsData) {
-                        (statsData as RouteCardStatsResult[]).forEach(item => {
-                          statsMap.set(item.route_id, {
-                            textBetaCount: Number(item.text_beta_count),
-                            videoBetaCount: Number(item.video_beta_count),
-                            averageRating: item.average_rating,
-                            ratingCount: Number(item.rating_count)
-                          });
+                      else if (progressData) {
+                        // Update the map, adding new entries or overwriting existing ones for the current page
+                        setUserProgressMap(prevMap => {
+                           const newMap = new Map(prevMap);
+                           progressData.forEach(p => newMap.set(p.route_id, p));
+                           return newMap;
                         });
                       }
-                      setRouteStatsMap(statsMap); // Update the map
                     }
 
-                    let commentMap = loadMore ? new Map(commentCountsMap) : new Map<string, number>();
-                    if (idsToFetchAuxData.length > 0) {
-                      const { data: commentCountsData, error: commentCountsError } = await supabase.rpc('get_route_comment_counts', { route_ids: idsToFetchAuxData });
+                    // Fetch Combined Stats for current page routes
+                    if (routeIds.length > 0) {
+                      const { data: statsData, error: statsError } = await supabase.rpc('get_route_card_stats', { route_ids: routeIds });
+                      if (statsError) console.error('[RoutesScreen] Error fetching route card stats via RPC:', statsError.message);
+                      else if (statsData) {
+                        setRouteStatsMap(prevMap => {
+                           const newMap = new Map(prevMap);
+                           (statsData as RouteCardStatsResult[]).forEach(item => {
+                             newMap.set(item.route_id, {
+                               textBetaCount: Number(item.text_beta_count),
+                               videoBetaCount: Number(item.video_beta_count),
+                               averageRating: item.average_rating,
+                               ratingCount: Number(item.rating_count)
+                             });
+                           });
+                           return newMap;
+                        });
+                      }
+                    }
+
+                    // Fetch Comment Counts for current page routes
+                    if (routeIds.length > 0) {
+                      const { data: commentCountsData, error: commentCountsError } = await supabase.rpc('get_route_comment_counts', { route_ids: routeIds });
                       if (commentCountsError) console.error('[RoutesScreen] Error fetching comment counts via RPC:', commentCountsError.message);
-                      else if (commentCountsData) (commentCountsData as { route_id: string; count: number }[]).forEach(item => commentMap.set(item.route_id, item.count));
-                      setCommentCountsMap(commentMap); // Update the map
+                      else if (commentCountsData) {
+                         setCommentCountsMap(prevMap => {
+                            const newMap = new Map(prevMap);
+                            (commentCountsData as { route_id: string; count: number }[]).forEach(item => newMap.set(item.route_id, item.count));
+                            return newMap;
+                         });
+                      }
                     }
 
                   } catch (err: any) {
                     console.error("[RoutesScreen] Unexpected error fetching route data:", err);
                     setError(err.message || "An unexpected error occurred.");
                     if (!loadMore) {
-                      setBaseRoutes([]); setUserProgressMap(new Map()); setRouteStatsMap(new Map()); // UPDATED
+                      setBaseRoutes([]); setUserProgressMap(new Map()); setRouteStatsMap(new Map());
                       setCommentCountsMap(new Map()); setGymLocations([]);
                     }
                     setHasMoreRoutes(false);
@@ -187,12 +203,24 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
                     setLoading(false);
                     setLoadingMoreRoutes(false);
                   }
-                }, [activeGymId, currentUser, userProgressMap, routeStatsMap, commentCountsMap]); // UPDATED dependencies
+                // Include filter/sort states as dependencies to refetch when they change
+                }, [activeGymId, currentUser, searchTerm, selectedLocationFilter, selectedGradeFilter, selectedSortOption]);
 
-                // Fetch initial data on mount or when gym changes
+                // Debounced fetch trigger for search term changes
                 useEffect(() => {
+                  if (debounceTimeoutRef.current) clearTimeout(debounceTimeoutRef.current);
+                  debounceTimeoutRef.current = setTimeout(() => {
+                    fetchAllRouteData(0); // Fetch first page when search term changes (debounced)
+                  }, 300); // 300ms debounce
+
+                  return () => { if (debounceTimeoutRef.current) clearTimeout(debounceTimeoutRef.current); };
+                }, [searchTerm, fetchAllRouteData]);
+
+                // Fetch initial data or refetch when filters/sort change (excluding search term handled by debounce)
+                useEffect(() => {
+                  // Avoid refetching if only search term changed (handled by debounce)
                   fetchAllRouteData(0); // Fetch first page
-                }, [activeGymId, currentUser]); // Removed fetchAllRouteData from here to prevent loop
+                }, [activeGymId, currentUser, selectedLocationFilter, selectedGradeFilter, selectedSortOption, fetchAllRouteData]); // Exclude searchTerm
 
                 // --- Handle Show More ---
                 const handleShowMore = () => {
@@ -201,8 +229,10 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
                     }
                 };
 
-                // Get unique grades for the filter dropdown (based on currently loaded routes)
+                // Get unique grades for the filter dropdown (based on currently loaded routes - could fetch all grades separately)
                 const availableGrades = useMemo(() => {
+                  // This is now less accurate as it only shows grades from loaded pages.
+                  // Consider fetching all distinct grades for the gym separately if needed.
                   const grades = new Set(baseRoutes.map(r => r.grade).filter(Boolean));
                   return Array.from(grades).sort((a, b) => {
                       const valA = getVGradeValue(a);
@@ -212,12 +242,12 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
                   });
                 }, [baseRoutes]);
 
-                // Memoize augmented, filtered, and sorted routes (operates on currently loaded baseRoutes)
-                const augmentedFilteredAndSortedRoutes = useMemo(() => {
-                  // 1. Augment routes
+                // Memoize augmented routes and apply client-side status filter/rating sort
+                const augmentedAndFilteredRoutes = useMemo(() => {
+                  // 1. Augment routes with fetched auxiliary data
                   const augmentedRoutes = baseRoutes.map(route => {
                     const progress = userProgressMap.get(route.id);
-                    const stats = routeStatsMap.get(route.id) || { textBetaCount: 0, videoBetaCount: 0, averageRating: null, ratingCount: 0 }; // UPDATED
+                    const stats = routeStatsMap.get(route.id) || { textBetaCount: 0, videoBetaCount: 0, averageRating: null, ratingCount: 0 };
                     const commentCount = commentCountsMap.get(route.id) || 0;
                     let status: 'sent' | 'attempted' | 'unseen' = 'unseen';
                     if (progress?.sent_at) status = 'sent';
@@ -225,33 +255,18 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
                     return {
                       ...route,
                       status,
-                      textBetaCount: stats.textBetaCount, // UPDATED
-                      videoBetaCount: stats.videoBetaCount, // UPDATED
-                      averageRating: stats.averageRating, // UPDATED
-                      ratingCount: stats.ratingCount, // UPDATED
+                      textBetaCount: stats.textBetaCount,
+                      videoBetaCount: stats.videoBetaCount,
+                      averageRating: stats.averageRating,
+                      ratingCount: stats.ratingCount,
                       hasComments: commentCount > 0,
                       hasNotes: !!progress?.notes && progress.notes.trim().length > 0,
-                      // rating: progress?.rating, // REMOVED individual rating
                       isOnWishlist: !!progress?.wishlist
                     };
                   });
 
-                  // 2. Filter routes
+                  // 2. Apply client-side status filter
                   let filteredRoutes = augmentedRoutes;
-                  if (searchTerm) {
-                    const lowerSearchTerm = searchTerm.toLowerCase();
-                    filteredRoutes = filteredRoutes.filter(route =>
-                      (route.name?.toLowerCase() || '').includes(lowerSearchTerm) ||
-                      (route.grade?.toLowerCase() || '').includes(lowerSearchTerm) ||
-                      (route.location_name?.toLowerCase() || '').includes(lowerSearchTerm)
-                    );
-                  }
-                  if (selectedLocationFilter) {
-                    filteredRoutes = filteredRoutes.filter(route => route.location_id === selectedLocationFilter);
-                  }
-                  if (selectedGradeFilter) {
-                    filteredRoutes = filteredRoutes.filter(route => route.grade === selectedGradeFilter);
-                  }
                   if (selectedStatusFilter !== 'all') {
                     filteredRoutes = filteredRoutes.filter(route => {
                       if (selectedStatusFilter === 'wishlist') return route.isOnWishlist;
@@ -259,25 +274,24 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
                     });
                   }
 
-                  // 3. Sort routes
-                  const sortedRoutes = [...filteredRoutes].sort((a, b) => {
-                    switch (selectedSortOption) {
-                      case 'grade_hardest': return getVGradeValue(b.grade) - getVGradeValue(a.grade);
-                      case 'grade_easiest': return getVGradeValue(a.grade) - getVGradeValue(b.grade);
-                      // Keep rating_highest for now, maybe sort by averageRating later?
-                      case 'rating_highest': const ratingA = a.averageRating ?? -1; const ratingB = b.averageRating ?? -1; return ratingB - ratingA;
-                      case 'date_newest': default: return new Date(b.date_set).getTime() - new Date(a.date_set).getTime();
-                    }
-                  });
+                  // 3. Apply client-side rating sort if selected
+                  if (selectedSortOption === 'rating_highest') {
+                    return [...filteredRoutes].sort((a, b) => {
+                      const ratingA = a.averageRating ?? -1;
+                      const ratingB = b.averageRating ?? -1;
+                      return ratingB - ratingA;
+                    });
+                  }
 
-                  return sortedRoutes;
+                  // Otherwise, return routes as filtered by status (already sorted by DB for other options)
+                  return filteredRoutes;
                 }, [
-                  baseRoutes, userProgressMap, routeStatsMap, commentCountsMap, // UPDATED
-                  searchTerm, selectedLocationFilter, selectedGradeFilter, selectedStatusFilter, selectedSortOption
+                  baseRoutes, userProgressMap, routeStatsMap, commentCountsMap,
+                  selectedStatusFilter, selectedSortOption // Only client-side filters/sorts needed here
                 ]);
 
                 // --- Render Logic ---
-                if (!activeGymId && !loading) { return <div className="p-4 pt-16 text-center text-brand-gray">Please select a gym first.</div>; }
+                if (!activeGymId && !loading && baseRoutes.length === 0) { return <div className="p-4 pt-16 text-center text-brand-gray">Please select a gym first.</div>; }
 
                 return (
                   <div className="min-h-screen bg-gray-50 flex flex-col">
@@ -319,6 +333,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
                           <div className="relative">
                             <select value={selectedGradeFilter} onChange={(e) => setSelectedGradeFilter(e.target.value)} className="w-full appearance-none bg-gray-50 border border-gray-300 rounded p-2 pr-8 text-brand-gray hover:border-gray-400 focus:outline-none focus:ring-1 focus:ring-accent-blue">
                               <option value="">All Grades</option>
+                              {/* TODO: Consider fetching all grades separately for a complete list */}
                               {availableGrades.map(grade => ( <option key={grade} value={grade}>{grade}</option> ))}
                             </select>
                             <ChevronDown size={16} className="absolute right-2.5 top-1/2 transform -translate-y-1/2 text-gray-400 pointer-events-none" />
@@ -340,7 +355,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
                               <option value="date_newest">Sort: Newest</option>
                               <option value="grade_hardest">Sort: Grade (Hardest)</option>
                               <option value="grade_easiest">Sort: Grade (Easiest)</option>
-                              <option value="rating_highest">Sort: Avg Rating</option> {/* Updated label */}
+                              <option value="rating_highest">Sort: Avg Rating</option>
                             </select>
                             <ChevronDown size={16} className="absolute right-2.5 top-1/2 transform -translate-y-1/2 text-gray-400 pointer-events-none" />
                           </div>
@@ -350,13 +365,13 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 
                     {/* Route List */}
                     <main className="flex-grow p-4 space-y-3 overflow-y-auto pb-20">
-                      {loading && baseRoutes.length === 0 ? ( // Show initial loading only if no routes are displayed yet
+                      {loading && baseRoutes.length === 0 ? ( // Show initial loading spinner
                         <div className="flex justify-center items-center pt-10"> <Loader2 className="animate-spin text-accent-blue mr-2" size={24} /> <p className="text-brand-gray">Loading routes...</p> </div>
                       ) : error ? (
                         <p className="text-center text-red-500 mt-8">{error}</p>
-                      ) : augmentedFilteredAndSortedRoutes.length > 0 ? (
+                      ) : augmentedAndFilteredRoutes.length > 0 ? (
                         <>
-                          {augmentedFilteredAndSortedRoutes.map(route => ( <RouteCard key={route.id} route={route} onClick={() => onNavigate('routeDetail', { routeId: route.id })} /> ))}
+                          {augmentedAndFilteredRoutes.map(route => ( <RouteCard key={route.id} route={route} onClick={() => onNavigate('routeDetail', { routeId: route.id })} /> ))}
                           {/* Show More Button */}
                           {hasMoreRoutes && (
                               <button
@@ -373,7 +388,12 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
                           )}
                         </>
                       ) : (
-                        <p className="text-center text-gray-500 mt-8"> {baseRoutes.length === 0 && !loading ? 'No active routes found for this gym yet.' : 'No routes found matching your criteria.'} </p>
+                        // Display message based on whether filters are active or if the gym has no routes
+                        <p className="text-center text-gray-500 mt-8">
+                          {searchTerm || selectedLocationFilter || selectedGradeFilter || selectedStatusFilter !== 'all'
+                            ? 'No routes found matching your criteria.'
+                            : 'No active routes found for this gym yet.'}
+                        </p>
                       )}
                     </main>
                   </div>
