@@ -32,6 +32,8 @@ import React, { useState, useEffect, useCallback } from 'react';
         // Default progress state
         const defaultProgress: UserProgress = { attempts: 0, sentDate: null, rating: null, notes: "", wishlist: false };
 
+        const COMMENT_PAGE_SIZE = 5; // Number of comments per page
+
         const getGradeColorClass = (colorName: string | undefined): string => {
           if (!colorName) return 'bg-gray-400';
           const colorMap: { [key: string]: string } = {
@@ -75,9 +77,12 @@ import React, { useState, useEffect, useCallback } from 'react';
           // State for Comments (fetched from DB)
           const [comments, setComments] = useState<Comment[]>([]);
           const [isLoadingComments, setIsLoadingComments] = useState(false);
+          const [loadingMoreComments, setLoadingMoreComments] = useState(false); // Loading more state
           const [isPostingComment, setIsPostingComment] = useState(false);
           const [commentsError, setCommentsError] = useState<string | null>(null);
           const [newComment, setNewComment] = useState('');
+          const [commentsCurrentPage, setCommentsCurrentPage] = useState(0); // Pagination state
+          const [hasMoreComments, setHasMoreComments] = useState(true); // Pagination state
 
           // State for Beta Voting
           const [userVotes, setUserVotes] = useState<UserVoteStatus>({});
@@ -127,30 +132,61 @@ import React, { useState, useEffect, useCallback } from 'react';
           }, [currentUser, route, progress, fetchUserProgress]);
 
 
-          // --- Fetch Comments ---
-          const fetchComments = useCallback(async () => {
-            if (!route) { setComments([]); return; }
-            setIsLoadingComments(true); setCommentsError(null);
+          // --- Fetch Comments (with pagination) ---
+          const fetchComments = useCallback(async (page = 0, loadMore = false) => {
+            if (!route) {
+                setComments([]); setIsLoadingComments(false); setLoadingMoreComments(false); setCommentsError(null); setHasMoreComments(false);
+                return;
+            }
+
+            if (loadMore) { setLoadingMoreComments(true); }
+            else { setIsLoadingComments(true); setComments([]); setCommentsCurrentPage(0); setHasMoreComments(true); } // Reset on initial load
+            setCommentsError(null);
+
+            const from = page * COMMENT_PAGE_SIZE;
+            const to = from + COMMENT_PAGE_SIZE - 1;
+
             try {
-              const { data, error: fetchError } = await supabase
+              const { data, error: fetchError, count } = await supabase
                 .from('route_comments')
-                .select(`*, profile:profiles!user_id ( display_name, avatar_url )`)
+                .select(`*, profile:profiles!user_id ( display_name, avatar_url )`, { count: 'exact' })
                 .eq('route_id', route.id)
-                .order('created_at', { ascending: true });
+                .order('created_at', { ascending: true }) // Fetch oldest first to display chronologically
+                .range(from, to);
 
-              if (fetchError) { setCommentsError('Failed to load comments.'); setComments([]); }
-              else if (data) {
-                const mappedComments = data.map(comment => ({ ...comment, display_name: (comment.profile as any)?.display_name || undefined, avatar_url: (comment.profile as any)?.avatar_url || undefined, }));
-                setComments(mappedComments as Comment[]);
-              } else { setComments([]); }
-            } catch (err) { setCommentsError("An unexpected error occurred."); setComments([]); }
-            finally { setIsLoadingComments(false); }
-          }, [route]);
+              if (fetchError) {
+                setCommentsError('Failed to load comments.');
+                if (!loadMore) setComments([]);
+                setHasMoreComments(false);
+              } else if (data) {
+                const mappedComments = data.map(comment => ({
+                  ...comment,
+                  display_name: (comment.profile as any)?.display_name || undefined,
+                  avatar_url: (comment.profile as any)?.avatar_url || undefined,
+                })) as Comment[];
 
+                setComments(prevComments => loadMore ? [...prevComments, ...mappedComments] : mappedComments);
+                setCommentsCurrentPage(page);
+                setHasMoreComments(data.length === COMMENT_PAGE_SIZE);
+              } else {
+                if (!loadMore) setComments([]);
+                setHasMoreComments(false);
+              }
+            } catch (err) {
+              setCommentsError("An unexpected error occurred.");
+              if (!loadMore) setComments([]);
+              setHasMoreComments(false);
+            } finally {
+              setIsLoadingComments(false);
+              setLoadingMoreComments(false);
+            }
+          }, [route]); // Dependency: route
+
+          // Initial fetch for comments
           useEffect(() => {
-            if (route && !isLoading) { fetchComments(); }
-            else { setComments([]); setIsLoadingComments(false); setCommentsError(null); }
-          }, [route, isLoading, fetchComments]);
+            if (route && !isLoading) { fetchComments(0); } // Fetch first page
+            else { setComments([]); setIsLoadingComments(false); setCommentsError(null); setHasMoreComments(false); }
+          }, [route, isLoading, fetchComments]); // Rerun if route changes
 
 
           // --- Fetch Beta ---
@@ -255,7 +291,8 @@ import React, { useState, useEffect, useCallback } from 'react';
                 const { error: logError } = await supabase.from('activity_log').insert({ user_id: currentUser.id, gym_id: route.gym_id, route_id: route.id, activity_type: 'add_comment', details: activityDetails, });
                 if (logError) console.error('Error logging add_comment activity:', logError);
                 setNewComment('');
-                await fetchComments();
+                // Refetch the first page of comments to show the new one
+                await fetchComments(0);
               }
             } catch (err) { setCommentsError("An unexpected error occurred."); }
             finally { setIsPostingComment(false); }
@@ -265,6 +302,13 @@ import React, { useState, useEffect, useCallback } from 'react';
           const handleNavigateToProfile = (userId: string) => {
             if (userId === currentUser?.id) { onNavigate('profile'); }
             else { onNavigate('publicProfile', { profileUserId: userId }); }
+          };
+
+          // --- Handle Show More Comments ---
+          const handleShowMoreComments = () => {
+              if (!loadingMoreComments && hasMoreComments) {
+                  fetchComments(commentsCurrentPage + 1, true);
+              }
           };
 
 
@@ -377,29 +421,47 @@ import React, { useState, useEffect, useCallback } from 'react';
                 {/* Discussion Section */}
                 <section className="bg-white p-4 rounded-lg shadow">
                    <h2 className="text-lg font-semibold text-brand-gray mb-3">Discussion</h2>
-                   {isLoadingComments && <div className="flex justify-center items-center py-4"><Loader2 className="animate-spin text-accent-blue" size={24} /></div>}
-                   {commentsError && <p className="text-red-500 text-sm text-center py-4">{commentsError}</p>}
-                   {!isLoadingComments && !commentsError && (
-                     <div className="space-y-4 mb-4 max-h-60 overflow-y-auto">
-                        {comments.length > 0 ? comments.map(comment => {
-                          const isCurrentUserComment = comment.user_id === currentUser?.id;
-                          return (
-                            <div key={comment.id} className="flex gap-3 border-b pb-3 last:border-b-0">
-                               <img src={getUserAvatarUrl(comment, comment.user_id)} alt="User avatar" className="w-8 h-8 rounded-full flex-shrink-0 mt-1"/>
-                               <div className="flex-grow">
-                                  <p className="text-sm">
-                                     <button onClick={() => handleNavigateToProfile(comment.user_id)} disabled={isCurrentUserComment} className={`font-medium text-brand-gray ${!isCurrentUserComment ? 'hover:underline hover:text-accent-blue cursor-pointer' : 'cursor-default'}`}> {getUserDisplayName(comment.user_id, currentUser, comment)} </button>
-                                     <span className="text-xs text-gray-400 ml-1">{new Date(comment.created_at).toLocaleTimeString([], {hour: 'numeric', minute:'2-digit'})}</span>
-                                  </p>
-                                  <p className="text-sm text-gray-700 mt-1">{comment.comment_text}</p>
-                               </div>
-                            </div>
-                          );
-                        }) : ( <p className="text-sm text-center text-gray-500 py-4">No comments yet. Start the discussion!</p> )}
-                     </div>
+                   {isLoadingComments && comments.length === 0 ? ( // Show initial loading only if no comments are displayed yet
+                     <div className="flex justify-center items-center py-4"><Loader2 className="animate-spin text-accent-blue" size={24} /></div>
+                   ) : commentsError ? (
+                     <p className="text-red-500 text-sm text-center py-4">{commentsError}</p>
+                   ) : (
+                     <>
+                       <div className="space-y-4 mb-4 max-h-96 overflow-y-auto"> {/* Increased max-height */}
+                          {comments.length > 0 ? comments.map(comment => {
+                            const isCurrentUserComment = comment.user_id === currentUser?.id;
+                            return (
+                              <div key={comment.id} className="flex gap-3 border-b pb-3 last:border-b-0">
+                                 <img src={getUserAvatarUrl(comment, comment.user_id)} alt="User avatar" className="w-8 h-8 rounded-full flex-shrink-0 mt-1"/>
+                                 <div className="flex-grow">
+                                    <p className="text-sm">
+                                       <button onClick={() => handleNavigateToProfile(comment.user_id)} disabled={isCurrentUserComment} className={`font-medium text-brand-gray ${!isCurrentUserComment ? 'hover:underline hover:text-accent-blue cursor-pointer' : 'cursor-default'}`}> {getUserDisplayName(comment.user_id, currentUser, comment)} </button>
+                                       <span className="text-xs text-gray-400 ml-1">{new Date(comment.created_at).toLocaleTimeString([], {hour: 'numeric', minute:'2-digit'})}</span>
+                                    </p>
+                                    <p className="text-sm text-gray-700 mt-1">{comment.comment_text}</p>
+                                 </div>
+                              </div>
+                            );
+                          }) : ( <p className="text-sm text-center text-gray-500 py-4">No comments yet. Start the discussion!</p> )}
+                       </div>
+                       {/* Show More Comments Button */}
+                       {hasMoreComments && (
+                           <button
+                               onClick={handleShowMoreComments}
+                               disabled={loadingMoreComments}
+                               className="w-full text-center text-sm text-accent-blue hover:underline font-medium py-2 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
+                           >
+                               {loadingMoreComments ? (
+                                   <> <Loader2 className="animate-spin mr-2" size={16} /> Loading... </>
+                               ) : (
+                                   'Show More Comments'
+                               )}
+                           </button>
+                       )}
+                     </>
                    )}
                    {/* Disable commenting if route removed */}
-                   <form onSubmit={handlePostComment} className="flex gap-2 items-center pt-2 border-t">
+                   <form onSubmit={handlePostComment} className="flex gap-2 items-center pt-4 border-t mt-4">
                       <input type="text" value={newComment} onChange={(e) => setNewComment(e.target.value)} placeholder={currentUser ? (isRemoved ? "Commenting disabled for removed routes" : "Add a comment...") : "Log in to comment"} className="flex-grow p-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-accent-blue disabled:bg-gray-100" disabled={!currentUser || isPostingComment || isRemoved} />
                       <button type="submit" className="bg-accent-blue text-white p-2 rounded-md hover:bg-opacity-90 disabled:opacity-50 disabled:cursor-not-allowed" disabled={!currentUser || !newComment.trim() || isPostingComment || isRemoved}> {isPostingComment ? <Loader2 size={20} className="animate-spin"/> : <Send size={20} />} </button>
                    </form>
