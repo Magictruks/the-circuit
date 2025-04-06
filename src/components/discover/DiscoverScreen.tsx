@@ -1,16 +1,10 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
     import { Search, MapPin, TrendingUp, Users, Compass, Loader2, UserPlus, UserCheck, AlertTriangle } from 'lucide-react';
     import { supabase, followUser, unfollowUser, checkFollowing } from '../../supabaseClient'; // Import follow/unfollow
-    import { UserMetadata, AppView, NavigationData, ActivityLogDetails } from '../../types'; // Import types
+    import { UserMetadata, AppView, NavigationData, ActivityLogDetails, RouteData, GymData } from '../../types'; // Import types
     import type { User } from '@supabase/supabase-js';
 
-    // Placeholder data (can be expanded later)
-    const placeholderTrendingRoutes = [
-      { id: 'tr1', name: 'Mega Roof Problem', grade: 'V9', gymName: 'Movement - Englewood', imageUrl: 'https://images.unsplash.com/photo-1605834102817-3538609e5e99?q=80&w=1974&auto=format&fit=crop&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D' },
-      { id: 'tr2', name: 'Slabtastic Voyage', grade: 'V4', gymName: 'Summit - Dallas', imageUrl: 'https://images.unsplash.com/photo-1579761470270-8d58dd85884a?q=80&w=1974&auto=format&fit=crop&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D' },
-      { id: 'tr3', name: 'The Cave Traverse', grade: 'V7', gymName: 'Brooklyn Boulders - Queensbridge', imageUrl: 'https://images.unsplash.com/photo-1599118139013-a69c71a5630a?q=80&w=1974&auto=format&fit=crop&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D' },
-    ];
-
+    // Placeholder data for gyms (can be expanded later)
     const placeholderGyms = [
         { id: 'g1', name: 'Sender One - LAX', city: 'Los Angeles, CA' },
         { id: 'g2', name: 'Planet Granite - Sunnyvale', city: 'Sunnyvale, CA' },
@@ -23,6 +17,22 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
         const fallbackUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(defaultName)}&background=random&color=fff`;
         return profile?.avatar_url || fallbackUrl;
     };
+
+    // Helper to get Tailwind color class from grade_color string
+    const getGradeColorClass = (colorName: string | undefined): string => {
+      if (!colorName) return 'bg-gray-400';
+      const colorMap: { [key: string]: string } = {
+        'accent-red': 'bg-accent-red', 'accent-blue': 'bg-accent-blue', 'accent-yellow': 'bg-accent-yellow',
+        'brand-green': 'bg-brand-green', 'accent-purple': 'bg-accent-purple', 'brand-gray': 'bg-brand-gray',
+        'brand-brown': 'bg-brand-brown',
+      };
+      return colorMap[colorName] || (colorMap[colorName.replace('_', '-')] || 'bg-gray-400');
+    };
+
+    // Interface for combined Route and Gym data for highlights
+    interface HighlightRoute extends RouteData {
+      gym_name?: string; // Add optional gym name
+    }
 
     interface DiscoverScreenProps {
       currentUser: User | null;
@@ -38,147 +48,117 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
       const [followStatusMap, setFollowStatusMap] = useState<Map<string, boolean>>(new Map());
       const [isUpdatingFollowMap, setIsUpdatingFollowMap] = useState<Map<string, boolean>>(new Map());
 
+      // State for Trending Routes
+      const [trendingRoutes, setTrendingRoutes] = useState<HighlightRoute[]>([]);
+      const [isLoadingTrending, setIsLoadingTrending] = useState(false);
+      const [trendingError, setTrendingError] = useState<string | null>(null);
+
       const debounceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+      // --- Fetch Trending Routes (Most Recently Added) ---
+      const fetchTrendingRoutes = useCallback(async () => {
+        setIsLoadingTrending(true);
+        setTrendingError(null);
+        try {
+          // Fetch the 3 most recently added routes, joining with gyms table
+          const { data, error } = await supabase
+            .from('routes')
+            .select(`
+              *,
+              gym:gyms ( name )
+            `)
+            .is('removed_at', null) // Only show active routes
+            .order('created_at', { ascending: false })
+            .limit(3);
+
+          if (error) {
+            throw new Error(`Failed to fetch trending routes: ${error.message}`);
+          }
+
+          if (data) {
+            const mappedRoutes = data.map(route => ({
+              ...route,
+              gym_name: (route.gym as any)?.name || 'Unknown Gym', // Extract gym name
+            }));
+            setTrendingRoutes(mappedRoutes as HighlightRoute[]);
+          } else {
+            setTrendingRoutes([]);
+          }
+
+        } catch (err: any) {
+          console.error("Error fetching trending routes:", err);
+          setTrendingError(err.message || "An unexpected error occurred.");
+          setTrendingRoutes([]);
+        } finally {
+          setIsLoadingTrending(false);
+        }
+      }, []);
+
+      // Fetch trending routes on mount
+      useEffect(() => {
+        fetchTrendingRoutes();
+      }, [fetchTrendingRoutes]);
+
 
       // --- Fetch Follow Statuses for Search Results ---
       const fetchFollowStatuses = useCallback(async (userIds: string[]) => {
         if (!currentUser || userIds.length === 0) {
-          setFollowStatusMap(new Map()); // Clear if no user or results
-          return;
+          setFollowStatusMap(new Map()); return;
         }
         try {
-          // Fetch all follow relationships where the current user is the follower
-          // and the followed user is in the search results
           const { data, error } = await supabase
             .from('user_follows')
             .select('following_id')
             .eq('follower_id', currentUser.id)
             .in('following_id', userIds);
-
-          if (error) {
-            console.error("Error fetching follow statuses:", error);
-            setFollowStatusMap(new Map()); // Clear on error
-            return;
-          }
-
+          if (error) { console.error("Error fetching follow statuses:", error); setFollowStatusMap(new Map()); return; }
           const newFollowStatusMap = new Map<string, boolean>();
-          userIds.forEach(id => {
-            // Check if the user ID exists in the fetched following_ids
-            const isFollowing = data?.some(follow => follow.following_id === id) ?? false;
-            newFollowStatusMap.set(id, isFollowing);
-          });
+          userIds.forEach(id => { const isFollowing = data?.some(follow => follow.following_id === id) ?? false; newFollowStatusMap.set(id, isFollowing); });
           setFollowStatusMap(newFollowStatusMap);
-
-        } catch (err) {
-          console.error("Unexpected error fetching follow statuses:", err);
-          setFollowStatusMap(new Map()); // Clear on unexpected error
-        }
+        } catch (err) { console.error("Unexpected error fetching follow statuses:", err); setFollowStatusMap(new Map()); }
       }, [currentUser]);
 
 
       // --- Search Climbers ---
       const searchClimbers = useCallback(async (term: string) => {
-        if (!term.trim() || !currentUser) {
-          setSearchResults([]);
-          setIsLoadingSearch(false);
-          setSearchError(null);
-          setFollowStatusMap(new Map()); // Clear follow statuses when search term is empty
-          return;
-        }
-        setIsLoadingSearch(true);
-        setSearchError(null);
+        if (!term.trim() || !currentUser) { setSearchResults([]); setIsLoadingSearch(false); setSearchError(null); setFollowStatusMap(new Map()); return; }
+        setIsLoadingSearch(true); setSearchError(null);
         try {
           const { data, error } = await supabase
-            .from('profiles')
-            .select('*')
-            .ilike('display_name', `%${term.trim()}%`) // Case-insensitive search
-            .neq('user_id', currentUser.id) // Exclude current user
-            .limit(10); // Limit results for performance
-
-          if (error) {
-            throw new Error(`Failed to search climbers: ${error.message}`);
-          }
-
+            .from('profiles').select('*').ilike('display_name', `%${term.trim()}%`)
+            .neq('user_id', currentUser.id).limit(10);
+          if (error) { throw new Error(`Failed to search climbers: ${error.message}`); }
           setSearchResults(data || []);
-          // Fetch follow statuses for the new results
-          if (data && data.length > 0) {
-            fetchFollowStatuses(data.map(profile => profile.user_id));
-          } else {
-            setFollowStatusMap(new Map()); // Clear if no results
-          }
-
-        } catch (err: any) {
-          console.error("Error searching climbers:", err);
-          setSearchError(err.message || "An unexpected error occurred.");
-          setSearchResults([]);
-          setFollowStatusMap(new Map()); // Clear on error
-        } finally {
-          setIsLoadingSearch(false);
-        }
+          if (data && data.length > 0) { fetchFollowStatuses(data.map(profile => profile.user_id)); }
+          else { setFollowStatusMap(new Map()); }
+        } catch (err: any) { console.error("Error searching climbers:", err); setSearchError(err.message || "An unexpected error occurred."); setSearchResults([]); setFollowStatusMap(new Map()); }
+        finally { setIsLoadingSearch(false); }
       }, [currentUser, fetchFollowStatuses]);
 
       // --- Debounced Search Effect ---
       useEffect(() => {
-        if (debounceTimeoutRef.current) {
-          clearTimeout(debounceTimeoutRef.current);
-        }
-        // Only start searching if term is not empty, otherwise clear results
-        if (climberSearchTerm.trim()) {
-          debounceTimeoutRef.current = setTimeout(() => {
-            searchClimbers(climberSearchTerm);
-          }, 300); // 300ms debounce
-        } else {
-          // Clear results immediately if search term is empty
-          setSearchResults([]);
-          setIsLoadingSearch(false);
-          setSearchError(null);
-          setFollowStatusMap(new Map());
-        }
-
-        return () => {
-          if (debounceTimeoutRef.current) {
-            clearTimeout(debounceTimeoutRef.current);
-          }
-        };
+        if (debounceTimeoutRef.current) { clearTimeout(debounceTimeoutRef.current); }
+        if (climberSearchTerm.trim()) { debounceTimeoutRef.current = setTimeout(() => { searchClimbers(climberSearchTerm); }, 300); }
+        else { setSearchResults([]); setIsLoadingSearch(false); setSearchError(null); setFollowStatusMap(new Map()); }
+        return () => { if (debounceTimeoutRef.current) { clearTimeout(debounceTimeoutRef.current); } };
       }, [climberSearchTerm, searchClimbers]);
 
 
       // --- Handle Follow/Unfollow Toggle ---
       const handleFollowToggle = async (targetUserId: string, targetUserName: string) => {
         if (!currentUser || isUpdatingFollowMap.get(targetUserId)) return;
-
         setIsUpdatingFollowMap(prev => new Map(prev).set(targetUserId, true));
         const currentlyFollowing = followStatusMap.get(targetUserId) || false;
-
         try {
-          if (currentlyFollowing) {
-            await unfollowUser(currentUser.id, targetUserId);
-            setFollowStatusMap(prev => new Map(prev).set(targetUserId, false));
-          } else {
-            await followUser(currentUser.id, targetUserId);
-            setFollowStatusMap(prev => new Map(prev).set(targetUserId, true));
-
-            // Log follow activity
-            const activityDetails: ActivityLogDetails = {
-                followed_user_id: targetUserId,
-                followed_user_name: targetUserName,
-            };
-            const { error: logError } = await supabase.from('activity_log').insert({
-                user_id: currentUser.id,
-                // gym_id: null, // Or maybe the user's current gym? Decide later.
-                activity_type: 'follow_user',
-                details: activityDetails,
-            });
+          if (currentlyFollowing) { await unfollowUser(currentUser.id, targetUserId); setFollowStatusMap(prev => new Map(prev).set(targetUserId, false)); }
+          else {
+            await followUser(currentUser.id, targetUserId); setFollowStatusMap(prev => new Map(prev).set(targetUserId, true));
+            const activityDetails: ActivityLogDetails = { followed_user_id: targetUserId, followed_user_name: targetUserName, };
+            const { error: logError } = await supabase.from('activity_log').insert({ user_id: currentUser.id, activity_type: 'follow_user', details: activityDetails, });
             if (logError) console.error('Error logging follow activity:', logError);
           }
-        } catch (error: any) {
-          console.error("Error updating follow status:", error);
-          // Re-fetch status on error to be safe
-          const check = await checkFollowing(currentUser.id, targetUserId);
-          setFollowStatusMap(prev => new Map(prev).set(targetUserId, check));
-        } finally {
-          setIsUpdatingFollowMap(prev => new Map(prev).set(targetUserId, false));
-        }
+        } catch (error: any) { console.error("Error updating follow status:", error); const check = await checkFollowing(currentUser.id, targetUserId); setFollowStatusMap(prev => new Map(prev).set(targetUserId, check)); }
+        finally { setIsUpdatingFollowMap(prev => new Map(prev).set(targetUserId, false)); }
       };
 
 
@@ -229,18 +209,38 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
               <h2 className="text-lg font-semibold text-brand-gray mb-3 flex items-center gap-2">
                  <TrendingUp size={20} /> Community Highlights
               </h2>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {/* Placeholder Highlight Cards */}
-                {placeholderTrendingRoutes.map(route => (
-                   <div key={route.id} className="bg-white rounded-lg shadow overflow-hidden cursor-pointer hover:shadow-md transition-shadow">
-                      <img src={route.imageUrl} alt={route.name} className="w-full h-32 object-cover" />
-                      <div className="p-3">
-                         <p className="font-semibold text-brand-gray truncate">{route.name} ({route.grade})</p>
-                         <p className="text-xs text-gray-500 truncate">{route.gymName}</p>
-                      </div>
-                   </div>
-                ))}
-              </div>
+              {isLoadingTrending ? (
+                <div className="flex justify-center items-center p-6 bg-white rounded-lg shadow">
+                  <Loader2 className="animate-spin text-accent-blue mr-2" size={24} />
+                  <p className="text-brand-gray">Loading highlights...</p>
+                </div>
+              ) : trendingError ? (
+                <p className="text-center text-red-500 p-6 bg-white rounded-lg shadow">{trendingError}</p>
+              ) : trendingRoutes.length > 0 ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {trendingRoutes.map(route => (
+                     <div
+                        key={route.id}
+                        onClick={() => onNavigate('routeDetail', { routeId: route.id })}
+                        className="bg-white rounded-lg shadow overflow-hidden cursor-pointer hover:shadow-md transition-shadow"
+                      >
+                        {route.image_url ? (
+                          <img src={route.image_url} alt={route.name} className="w-full h-32 object-cover" />
+                        ) : (
+                          <div className={`w-full h-32 ${getGradeColorClass(route.grade_color)} flex items-center justify-center text-white font-bold text-2xl`}>
+                            {route.grade}
+                          </div>
+                        )}
+                        <div className="p-3">
+                           <p className="font-semibold text-brand-gray truncate">{route.name} ({route.grade})</p>
+                           <p className="text-xs text-gray-500 truncate">{route.gym_name}</p>
+                        </div>
+                     </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-center text-gray-500 p-6 bg-white rounded-lg shadow">No trending routes found right now.</p>
+              )}
             </section>
 
             {/* Connect Section */}
@@ -280,7 +280,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
                     return (
                       <div key={profile.user_id} className="flex items-center justify-between gap-3 p-2 border-b last:border-b-0">
                         <button
-                          onClick={() => onNavigate('profile', { profileUserId: profile.user_id })}
+                          onClick={() => onNavigate('publicProfile', { profileUserId: profile.user_id })} // Navigate to public profile
                           className="flex items-center gap-3 flex-grow hover:opacity-80"
                         >
                           <img src={getUserAvatarUrl(profile)} alt={profile.display_name} className="w-10 h-10 rounded-full object-cover bg-gray-300" />
@@ -292,7 +292,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
                         </button>
                         <button
                           onClick={() => handleFollowToggle(profile.user_id, profile.display_name)}
-                          disabled={isUpdating}
+                          disabled={isUpdating || !currentUser} // Also disable if not logged in
                           className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors duration-200 flex items-center gap-1 disabled:opacity-60 ${
                             isFollowing
                               ? 'bg-gray-200 text-brand-gray hover:bg-gray-300'
