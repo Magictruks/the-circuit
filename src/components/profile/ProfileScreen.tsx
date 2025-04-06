@@ -36,7 +36,8 @@ import React, { useState, useEffect, useCallback } from 'react';
         highestGrade: string | null;
     }
 
-    const INITIAL_ITEM_LIMIT = 5;
+    const LOGBOOK_PAGE_SIZE = 10; // Items per page for logbook
+    const WISHLIST_PAGE_SIZE = 10; // Items per page for wishlist (can adjust)
 
     const ProfileScreen: React.FC<ProfileScreenProps> = ({ currentUser, viewingProfileId, onNavigate, getGymNameById }) => {
       const [profileData, setProfileData] = useState<UserMetadata | null>(null);
@@ -49,17 +50,21 @@ import React, { useState, useEffect, useCallback } from 'react';
       const [editError, setEditError] = useState<string | null>(null);
       const [isSaving, setIsSaving] = useState(false);
 
-      // State for Logbook
+      // State for Logbook Pagination
       const [logbookEntries, setLogbookEntries] = useState<LogbookEntry[]>([]);
       const [isLoadingLogbook, setIsLoadingLogbook] = useState(true);
+      const [loadingMoreLogbook, setLoadingMoreLogbook] = useState(false);
       const [logbookError, setLogbookError] = useState<string | null>(null);
-      const [visibleLogbookCount, setVisibleLogbookCount] = useState(INITIAL_ITEM_LIMIT); // Limit state
+      const [logbookCurrentPage, setLogbookCurrentPage] = useState(0);
+      const [hasMoreLogbook, setHasMoreLogbook] = useState(true);
 
-      // State for Wishlist
+      // State for Wishlist Pagination (similar structure)
       const [wishlistItems, setWishlistItems] = useState<RouteData[]>([]);
       const [isLoadingWishlist, setIsLoadingWishlist] = useState(true);
+      const [loadingMoreWishlist, setLoadingMoreWishlist] = useState(false);
       const [wishlistError, setWishlistError] = useState<string | null>(null);
-      const [visibleWishlistCount, setVisibleWishlistCount] = useState(INITIAL_ITEM_LIMIT); // Limit state
+      const [wishlistCurrentPage, setWishlistCurrentPage] = useState(0);
+      const [hasMoreWishlist, setHasMoreWishlist] = useState(true);
 
       // State for Stats
       const [userStats, setUserStats] = useState<UserStats | null>(null);
@@ -131,10 +136,20 @@ import React, { useState, useEffect, useCallback } from 'react';
         }
       }, [profileUserId]);
 
-      // --- Fetch Logbook Data ---
-      const fetchLogbook = useCallback(async () => {
-        if (!profileUserId) { setLogbookEntries([]); setIsLoadingLogbook(false); setLogbookError(null); return; }
-        setIsLoadingLogbook(true); setLogbookError(null);
+      // --- Fetch Logbook Data (with pagination) ---
+      const fetchLogbook = useCallback(async (page = 0, loadMore = false) => {
+        if (!profileUserId) {
+            setLogbookEntries([]); setIsLoadingLogbook(false); setLoadingMoreLogbook(false); setLogbookError(null); setHasMoreLogbook(false);
+            return;
+        }
+
+        if (loadMore) { setLoadingMoreLogbook(true); }
+        else { setIsLoadingLogbook(true); setLogbookEntries([]); setLogbookCurrentPage(0); setHasMoreLogbook(true); } // Reset on initial load
+        setLogbookError(null);
+
+        const from = page * LOGBOOK_PAGE_SIZE;
+        const to = from + LOGBOOK_PAGE_SIZE - 1;
+
         try {
           const { data, error } = await supabase
             .from('user_route_progress')
@@ -146,13 +161,15 @@ import React, { useState, useEffect, useCallback } from 'react';
               )
             `)
             .eq('user_id', profileUserId)
-            .or('sent_at.not.is.null,attempts.gt.0')
-            .order('updated_at', { ascending: false });
+            .or('sent_at.not.is.null,attempts.gt.0') // Fetch attempts OR sends
+            .order('updated_at', { ascending: false }) // Order by most recently updated progress
+            .range(from, to);
 
           if (error) {
             console.error("Error fetching logbook:", error);
             setLogbookError("Failed to load climb log.");
-            setLogbookEntries([]);
+            if (!loadMore) setLogbookEntries([]);
+            setHasMoreLogbook(false);
           } else if (data) {
             const mappedEntries = data.map(item => {
               const routeData = item.route as any;
@@ -168,23 +185,37 @@ import React, { useState, useEffect, useCallback } from 'react';
                 user_progress_updated_at: item.updated_at,
               };
             });
-            setLogbookEntries(mappedEntries as LogbookEntry[]);
+            setLogbookEntries(prevEntries => loadMore ? [...prevEntries, ...mappedEntries] : mappedEntries);
+            setLogbookCurrentPage(page);
+            setHasMoreLogbook(data.length === LOGBOOK_PAGE_SIZE);
           } else {
-            setLogbookEntries([]);
+            if (!loadMore) setLogbookEntries([]);
+            setHasMoreLogbook(false);
           }
         } catch (err: any) {
           console.error("Unexpected error fetching logbook:", err);
           setLogbookError(err.message || "An unexpected error occurred.");
-          setLogbookEntries([]);
+          if (!loadMore) setLogbookEntries([]);
+          setHasMoreLogbook(false);
         } finally {
           setIsLoadingLogbook(false);
+          setLoadingMoreLogbook(false);
         }
       }, [profileUserId]);
 
-      // --- Fetch Wishlist Data ---
-      const fetchWishlist = useCallback(async () => {
-        if (!profileUserId) { setWishlistItems([]); setIsLoadingWishlist(false); setWishlistError(null); return; }
-        setIsLoadingWishlist(true); setWishlistError(null);
+      // --- Fetch Wishlist Data (with pagination) ---
+      const fetchWishlist = useCallback(async (page = 0, loadMore = false) => {
+        if (!profileUserId) {
+            setWishlistItems([]); setIsLoadingWishlist(false); setLoadingMoreWishlist(false); setWishlistError(null); setHasMoreWishlist(false);
+            return;
+        }
+        if (loadMore) { setLoadingMoreWishlist(true); }
+        else { setIsLoadingWishlist(true); setWishlistItems([]); setWishlistCurrentPage(0); setHasMoreWishlist(true); } // Reset on initial load
+        setWishlistError(null);
+
+        const from = page * WISHLIST_PAGE_SIZE;
+        const to = from + WISHLIST_PAGE_SIZE - 1;
+
         try {
           const { data, error } = await supabase
             .from('user_route_progress')
@@ -197,12 +228,14 @@ import React, { useState, useEffect, useCallback } from 'react';
             .eq('user_id', profileUserId)
             .eq('wishlist', true)
             .is('route.removed_at', null) // Only show active routes on wishlist
-            .order('created_at', { referencedTable: 'routes', ascending: false });
+            .order('created_at', { referencedTable: 'routes', ascending: false })
+            .range(from, to);
 
           if (error) {
             console.error("Error fetching wishlist:", error);
             setWishlistError("Failed to load wishlist.");
-            setWishlistItems([]);
+            if (!loadMore) setWishlistItems([]);
+            setHasMoreWishlist(false);
           } else if (data) {
             const mappedItems = data.map(item => {
                const routeData = item.route as any;
@@ -212,16 +245,21 @@ import React, { useState, useEffect, useCallback } from 'react';
                  location_name: locationInfo?.name || null,
                };
             });
-            setWishlistItems(mappedItems as RouteData[]);
+            setWishlistItems(prevItems => loadMore ? [...prevItems, ...mappedItems] : mappedItems);
+            setWishlistCurrentPage(page);
+            setHasMoreWishlist(data.length === WISHLIST_PAGE_SIZE);
           } else {
-            setWishlistItems([]);
+            if (!loadMore) setWishlistItems([]);
+            setHasMoreWishlist(false);
           }
         } catch (err: any) {
           console.error("Unexpected error fetching wishlist:", err);
           setWishlistError(err.message || "An unexpected error occurred.");
-          setWishlistItems([]);
+          if (!loadMore) setWishlistItems([]);
+          setHasMoreWishlist(false);
         } finally {
           setIsLoadingWishlist(false);
+          setLoadingMoreWishlist(false);
         }
       }, [profileUserId]);
 
@@ -283,15 +321,18 @@ import React, { useState, useEffect, useCallback } from 'react';
         setLogbookError(null);
         setWishlistError(null);
         setStatsError(null);
-        setVisibleLogbookCount(INITIAL_ITEM_LIMIT); // Reset limit
-        setVisibleWishlistCount(INITIAL_ITEM_LIMIT); // Reset limit
+        // Reset pagination states
+        setLogbookCurrentPage(0);
+        setHasMoreLogbook(true);
+        setWishlistCurrentPage(0);
+        setHasMoreWishlist(true);
 
         // Fetch data
         fetchProfileData();
         fetchFollowStatus();
         fetchFollowCounts();
-        fetchLogbook();
-        fetchWishlist();
+        fetchLogbook(0); // Fetch first page of logbook
+        fetchWishlist(0); // Fetch first page of wishlist
         fetchStats();
       }, [profileUserId, fetchProfileData, fetchFollowStatus, fetchFollowCounts, fetchLogbook, fetchWishlist, fetchStats]);
 
@@ -357,10 +398,14 @@ import React, { useState, useEffect, useCallback } from 'react';
 
       // --- Show More Handlers ---
       const handleShowMoreLogbook = () => {
-        setVisibleLogbookCount(logbookEntries.length);
+        if (!loadingMoreLogbook && hasMoreLogbook) {
+            fetchLogbook(logbookCurrentPage + 1, true);
+        }
       };
       const handleShowMoreWishlist = () => {
-        setVisibleWishlistCount(wishlistItems.length);
+        if (!loadingMoreWishlist && hasMoreWishlist) {
+            fetchWishlist(wishlistCurrentPage + 1, true);
+        }
       };
 
       // --- Rendering Functions ---
@@ -427,8 +472,6 @@ import React, { useState, useEffect, useCallback } from 'react';
       const currentDisplayName = isLoadingProfile ? 'Loading...' : (profileData?.display_name || 'Climber');
       const userAvatar = isLoadingProfile ? '' : (profileData?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(currentDisplayName)}&background=random&color=fff`);
       const userHomeGymIds = isLoadingProfile ? [] : (profileData?.selected_gym_ids || []);
-      const canShowMoreLogbook = logbookEntries.length > visibleLogbookCount;
-      const canShowMoreWishlist = wishlistItems.length > visibleWishlistCount;
 
       return (
         <div className="min-h-screen bg-gray-100 pb-16">
@@ -531,19 +574,24 @@ import React, { useState, useEffect, useCallback } from 'react';
               {/* Logbook Tab */}
               {activeTab === 'logbook' && (
                 <div>
-                  {isLoadingLogbook ? (
+                  {isLoadingLogbook && logbookEntries.length === 0 ? ( // Show initial loading only if no items are displayed yet
                     <div className="flex justify-center items-center p-6"> <Loader2 className="animate-spin text-accent-blue mr-2" size={24} /> Loading logbook... </div>
                   ) : logbookError ? (
                     <p className="text-center text-red-500 p-6">{logbookError}</p>
                   ) : logbookEntries.length > 0 ? (
                     <>
-                      {logbookEntries.slice(0, visibleLogbookCount).map(renderLogbookItem)}
-                      {canShowMoreLogbook && (
+                      {logbookEntries.map(renderLogbookItem)}
+                      {hasMoreLogbook && (
                         <button
                           onClick={handleShowMoreLogbook}
-                          className="w-full text-center text-sm text-accent-blue hover:underline font-medium py-3 border-t"
+                          disabled={loadingMoreLogbook}
+                          className="w-full text-center text-sm text-accent-blue hover:underline font-medium py-3 border-t disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
                         >
-                          Show More ({logbookEntries.length - visibleLogbookCount} remaining)
+                          {loadingMoreLogbook ? (
+                              <> <Loader2 className="animate-spin mr-2" size={16} /> Loading... </>
+                          ) : (
+                              'Show More'
+                          )}
                         </button>
                       )}
                     </>
@@ -555,19 +603,24 @@ import React, { useState, useEffect, useCallback } from 'react';
               {/* Wishlist Tab */}
               {activeTab === 'wishlist' && isOwnProfile && (
                 <div>
-                  {isLoadingWishlist ? (
+                  {isLoadingWishlist && wishlistItems.length === 0 ? ( // Show initial loading
                     <div className="flex justify-center items-center p-6"> <Loader2 className="animate-spin text-accent-blue mr-2" size={24} /> Loading wishlist... </div>
                   ) : wishlistError ? (
                     <p className="text-center text-red-500 p-6">{wishlistError}</p>
                   ) : wishlistItems.length > 0 ? (
                      <>
-                       {wishlistItems.slice(0, visibleWishlistCount).map(renderWishlistItem)}
-                       {canShowMoreWishlist && (
+                       {wishlistItems.map(renderWishlistItem)}
+                       {hasMoreWishlist && (
                          <button
                            onClick={handleShowMoreWishlist}
-                           className="w-full text-center text-sm text-accent-blue hover:underline font-medium py-3 border-t"
+                           disabled={loadingMoreWishlist}
+                           className="w-full text-center text-sm text-accent-blue hover:underline font-medium py-3 border-t disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
                          >
-                           Show More ({wishlistItems.length - visibleWishlistCount} remaining)
+                           {loadingMoreWishlist ? (
+                               <> <Loader2 className="animate-spin mr-2" size={16} /> Loading... </>
+                           ) : (
+                               'Show More'
+                           )}
                          </button>
                        )}
                      </>
