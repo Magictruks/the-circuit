@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-    import { Settings, BarChart3, ListChecks, Bookmark, MapPin, Edit3, Save, XCircle, Loader2, CheckCircle, Circle, AlertTriangle, UserPlus, UserCheck, ArrowLeft, Camera } from 'lucide-react'; // Added Camera
+    import { Settings, BarChart3, ListChecks, Bookmark, Edit3, Save, XCircle, Loader2, CheckCircle, Circle, AlertTriangle, UserPlus, UserCheck, ArrowLeft, Camera } from 'lucide-react'; // Removed MapPin
     import { RouteData, AppView, UserMetadata, LogbookEntry, FollowCounts, ActivityLogDetails, NavigationData } from '../../types';
     import { supabase, followUser, unfollowUser, checkFollowing, getFollowCounts } from '../../supabaseClient';
     import type { User } from '@supabase/supabase-js';
@@ -26,7 +26,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
        currentUser: User | null;
        viewingProfileId: string | null;
        onNavigate: (view: AppView, data?: NavigationData) => void;
-       getGymNameById: (id: string | null) => string;
+       getGymNameById: (id: string | null) => string; // Keep this prop even if not displayed here, might be used elsewhere
     }
 
     type ProfileTab = 'logbook' | 'wishlist' | 'stats';
@@ -605,7 +605,8 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
       // Use placeholder data while loading profile details for the header
       const currentDisplayName = isLoadingProfile ? 'Loading...' : (profileData?.display_name || 'Climber');
       const userAvatar = isLoadingProfile ? '' : (profileData?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(currentDisplayName)}&background=random&color=fff`);
-      const userHomeGymIds = isLoadingProfile ? [] : (profileData?.selected_gym_ids || []);
+      // REMOVED: userHomeGymIds is no longer needed for display here
+      // const userHomeGymIds = isLoadingProfile ? [] : (profileData?.selected_gym_ids || []);
 
       return (
         <div className="min-h-screen bg-gray-100 pb-16">
@@ -688,16 +689,11 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
                    {avatarUploadError && isOwnProfile && (
                       <p className="text-red-300 text-xs mt-1">{avatarUploadError}</p>
                    )}
-                   {/* Gym Info: Show loading or actual gyms */}
-                   {isLoadingProfile ? (
-                     <div className="h-4 bg-white/30 rounded w-1/2 animate-pulse mt-1"></div>
-                   ) : (
-                     <div className="text-sm opacity-90 mt-1 flex items-start gap-1">
-                       <MapPin size={14} className="mt-0.5 flex-shrink-0"/>
-                       <span className="truncate"> {userHomeGymIds.length > 0 ? userHomeGymIds.map(id => getGymNameById(id)).join(', ') : 'No gyms selected'} </span>
-                     </div>
-                   )}
+                   {/* REMOVED: Gym Info Display */}
+                   {/* {isLoadingProfile ? ( ... ) : ( ... )} */}
+
                    {/* Follow Counts: Show loading or actual counts */}
+                   {/* Adjusted margin-top */}
                    <div className="text-sm opacity-90 mt-2 flex items-center gap-4">
                       {isLoadingFollowCounts ? <Loader2 size={14} className="animate-spin"/> : (
                          <>
