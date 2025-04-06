@@ -1,15 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-              import { Search, MapPin, TrendingUp, Users, Compass, Loader2, UserPlus, UserCheck, AlertTriangle, Star } from 'lucide-react'; // Added Star
+              import { Search, TrendingUp, Users, Compass, Loader2, UserPlus, UserCheck, AlertTriangle, Star } from 'lucide-react'; // Removed MapPin
               import { supabase, followUser, unfollowUser, checkFollowing } from '../../supabaseClient';
-              import { UserMetadata, AppView, NavigationData, ActivityLogDetails, RouteData, GymData } from '../../types';
+              import { UserMetadata, AppView, NavigationData, ActivityLogDetails, RouteData } from '../../types'; // Removed GymData as it's no longer used here
               import type { User } from '@supabase/supabase-js';
-
-              // Placeholder data for gyms (can be expanded later)
-              const placeholderGyms = [
-                  { id: 'g1', name: 'Sender One - LAX', city: 'Los Angeles, CA' },
-                  { id: 'g2', name: 'Planet Granite - Sunnyvale', city: 'Sunnyvale, CA' },
-                  { id: 'g3', name: 'MetroRock - Everett', city: 'Everett, MA' },
-              ];
 
               // Helper to get avatar URL
               const getUserAvatarUrl = (profile: UserMetadata | null): string => {
@@ -41,7 +34,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
               }
 
               const DiscoverScreen: React.FC<DiscoverScreenProps> = ({ currentUser, activeGymId, onNavigate }) => {
-                const [gymSearchTerm, setGymSearchTerm] = useState('');
+                // Removed gymSearchTerm state
                 const [climberSearchTerm, setClimberSearchTerm] = useState('');
                 const [searchResults, setSearchResults] = useState<UserMetadata[]>([]);
                 const [isLoadingSearch, setIsLoadingSearch] = useState(false);
@@ -232,8 +225,6 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
                     );
                 };
 
-                // TODO: Implement actual search logic for gyms
-
                 return (
                   <div className="min-h-screen bg-gray-100 pb-16"> {/* Added padding-bottom */}
                     {/* Header */}
@@ -245,34 +236,8 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 
                     {/* Main Content */}
                     <main className="p-4 space-y-6">
-                      {/* Gym Search Section */}
-                      <section>
-                        <h2 className="text-lg font-semibold text-brand-gray mb-3 flex items-center gap-2">
-                           <MapPin size={20} /> Find a Gym
-                        </h2>
-                        <div className="relative">
-                          <input
-                            type="text"
-                            placeholder="Search gyms by name or location..."
-                            value={gymSearchTerm}
-                            onChange={(e) => setGymSearchTerm(e.target.value)}
-                            className="w-full px-4 py-3 pl-10 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent-blue bg-white"
-                          />
-                          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
-                        </div>
-                        {/* Placeholder for gym search results */}
-                        <div className="mt-3 space-y-2">
-                           {placeholderGyms.map(gym => (
-                              <div key={gym.id} className="bg-white p-3 rounded-lg shadow-sm border flex items-center justify-between">
-                                 <div>
-                                    <p className="font-medium text-brand-gray">{gym.name}</p>
-                                    <p className="text-xs text-gray-500">{gym.city}</p>
-                                 </div>
-                                 <button className="text-xs bg-accent-blue text-white px-3 py-1 rounded-full hover:bg-opacity-90">View</button>
-                              </div>
-                           ))}
-                        </div>
-                      </section>
+                      {/* REMOVED: Gym Search Section */}
+                      {/* <section> ... </section> */}
 
                       {/* Community Highlights Section */}
                       <section>
