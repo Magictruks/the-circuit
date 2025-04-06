@@ -61,8 +61,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
         return log.user_avatar_url || fallbackUrl;
     };
 
-    const INITIAL_LOG_COUNT = 10;
-    const LOG_INCREMENT = 10;
+    const LOG_PAGE_SIZE = 10; // Number of items per page
 
     const DashboardScreen: React.FC<DashboardScreenProps> = ({
         currentUser,
@@ -77,8 +76,10 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
         const [searchTerm, setSearchTerm] = useState('');
         const [activityLog, setActivityLog] = useState<ActivityLogEntry[]>([]);
         const [loadingActivity, setLoadingActivity] = useState(false);
+        const [loadingMoreActivity, setLoadingMoreActivity] = useState(false); // State for loading more
         const [activityError, setActivityError] = useState<string | null>(null);
-        const [visibleLogCount, setVisibleLogCount] = useState(INITIAL_LOG_COUNT); // State for visible logs
+        const [currentPage, setCurrentPage] = useState(0); // Track current page (0-indexed)
+        const [hasMoreActivity, setHasMoreActivity] = useState(true); // Track if more items might exist
 
         // State for Quick Stats
         const [quickStats, setQuickStats] = useState<QuickStatsData | null>(null);
@@ -90,15 +91,22 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
         const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => { setSearchTerm(event.target.value); };
         const handleSearchClick = () => { onNavigate('routes', { searchTerm: searchTerm.trim() }); };
 
-        // --- Fetch Activity Log ---
-        const fetchActivityLog = useCallback(async () => {
-            if (!activeGymId) { setActivityLog([]); setLoadingActivity(false); setActivityError(null); return; }
-            setLoadingActivity(true); setActivityError(null);
-            setVisibleLogCount(INITIAL_LOG_COUNT); // Reset visible count on fetch
+        // --- Fetch Activity Log (with pagination) ---
+        const fetchActivityLog = useCallback(async (page = 0, loadMore = false) => {
+            if (!activeGymId) {
+                setActivityLog([]); setLoadingActivity(false); setLoadingMoreActivity(false); setActivityError(null); setHasMoreActivity(false);
+                return;
+            }
+
+            if (loadMore) { setLoadingMoreActivity(true); }
+            else { setLoadingActivity(true); setActivityLog([]); setCurrentPage(0); setHasMoreActivity(true); } // Reset on initial load or gym switch
+            setActivityError(null);
+
+            const from = page * LOG_PAGE_SIZE;
+            const to = from + LOG_PAGE_SIZE - 1;
+
             try {
-                // Fetch activity log, joining profiles (actor) and routes (including location)
-                // Keep limit at 20 for now, manage display locally
-                const { data, error } = await supabase
+                const { data, error, count } = await supabase
                     .from('activity_log')
                     .select(`
                         *,
@@ -109,15 +117,16 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
                           grade_color,
                           location_info:locations ( name )
                         )
-                    `)
+                    `, { count: 'exact' }) // Request count for pagination check
                     .eq('gym_id', activeGymId)
                     .order('created_at', { ascending: false })
-                    .limit(50); // Fetch more initially to allow "Show More"
+                    .range(from, to); // Use range for pagination
 
                 if (error) {
                     console.error("Error fetching activity log:", error);
                     setActivityError(`Failed to load activity: ${error.message}`);
-                    setActivityLog([]);
+                    if (!loadMore) setActivityLog([]); // Clear log on initial load error
+                    setHasMoreActivity(false);
                 } else if (data) {
                     const mappedLogs = data.map(log => {
                         const routeInfo = log.route as any;
@@ -135,16 +144,23 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
                             details: log.details,
                         };
                     });
-                    setActivityLog(mappedLogs as ActivityLogEntry[]);
+
+                    setActivityLog(prevLog => loadMore ? [...prevLog, ...mappedLogs] : mappedLogs);
+                    setCurrentPage(page);
+                    // Check if there are more items based on the fetched data length
+                    setHasMoreActivity(data.length === LOG_PAGE_SIZE);
                 } else {
-                    setActivityLog([]);
+                    if (!loadMore) setActivityLog([]);
+                    setHasMoreActivity(false);
                 }
             } catch (err: any) {
                 console.error("Unexpected error fetching activity log:", err);
                 setActivityError(err.message || "An unexpected error occurred.");
-                setActivityLog([]);
+                if (!loadMore) setActivityLog([]);
+                setHasMoreActivity(false);
             } finally {
                 setLoadingActivity(false);
+                setLoadingMoreActivity(false);
             }
         }, [activeGymId]);
 
@@ -168,13 +184,15 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 
         // Fetch data on mount or when user/gym changes
         useEffect(() => {
-            fetchActivityLog();
+            fetchActivityLog(0); // Fetch first page on gym change
             fetchQuickStats(activeGymId);
-        }, [fetchActivityLog, fetchQuickStats, activeGymId]);
+        }, [fetchActivityLog, fetchQuickStats, activeGymId]); // Rerun when activeGymId changes
 
         // --- Handle Show More ---
         const handleShowMore = () => {
-            setVisibleLogCount(prevCount => prevCount + LOG_INCREMENT);
+            if (!loadingMoreActivity && hasMoreActivity) {
+                fetchActivityLog(currentPage + 1, true); // Fetch next page, indicate it's loading more
+            }
         };
 
         // --- Render Activity Item ---
@@ -228,7 +246,6 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
         };
 
         const activeGymName = getGymNameById(activeGymId);
-        const canShowMore = activityLog.length > visibleLogCount;
 
         return (
             <div className="min-h-screen bg-gray-50 flex flex-col">
@@ -260,15 +277,20 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
                          : activityError ? ( <p className="text-center text-red-500 p-6 bg-white rounded-lg shadow">{activityError}</p> )
                          : activityLog.length > 0 ? (
                             <div className="space-y-3">
-                                {/* Render only visible logs */}
-                                {activityLog.slice(0, visibleLogCount).map(renderActivityItem)}
+                                {/* Render logs */}
+                                {activityLog.map(renderActivityItem)}
                                 {/* Show More Button */}
-                                {canShowMore && (
+                                {hasMoreActivity && (
                                     <button
                                         onClick={handleShowMore}
-                                        className="w-full mt-3 text-center text-sm text-accent-blue hover:underline font-medium py-2"
+                                        disabled={loadingMoreActivity}
+                                        className="w-full mt-3 text-center text-sm text-accent-blue hover:underline font-medium py-2 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
                                     >
-                                        Show More
+                                        {loadingMoreActivity ? (
+                                            <> <Loader2 className="animate-spin mr-2" size={16} /> Loading... </>
+                                        ) : (
+                                            'Show More'
+                                        )}
                                     </button>
                                 )}
                             </div>
