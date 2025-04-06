@@ -37,7 +37,7 @@ import React, { useState, useEffect, useCallback } from 'react';
         highestGrade: string | null;
     }
 
-    const INITIAL_ITEM_LIMIT = 5; // Define limit constant
+    const LOGBOOK_PAGE_SIZE = 10; // Define page size constant
 
     const PublicProfileScreen: React.FC<PublicProfileScreenProps> = ({ currentUser, viewingProfileId, onNavigate, getGymNameById, onBack }) => {
       const [profileData, setProfileData] = useState<UserMetadata | null>(null);
@@ -46,11 +46,13 @@ import React, { useState, useEffect, useCallback } from 'react';
 
       const [activeTab, setActiveTab] = useState<PublicProfileTab>('logbook');
 
-      // State for Logbook
+      // State for Logbook Pagination
       const [logbookEntries, setLogbookEntries] = useState<LogbookEntry[]>([]);
       const [isLoadingLogbook, setIsLoadingLogbook] = useState(true);
+      const [loadingMoreLogbook, setLoadingMoreLogbook] = useState(false);
       const [logbookError, setLogbookError] = useState<string | null>(null);
-      const [visibleLogbookCount, setVisibleLogbookCount] = useState(INITIAL_ITEM_LIMIT); // Limit state
+      const [logbookCurrentPage, setLogbookCurrentPage] = useState(0);
+      const [hasMoreLogbook, setHasMoreLogbook] = useState(true);
 
       // State for Stats
       const [userStats, setUserStats] = useState<UserStats | null>(null);
@@ -122,10 +124,20 @@ import React, { useState, useEffect, useCallback } from 'react';
         }
       }, [profileUserId]);
 
-      // --- Fetch Logbook Data ---
-      const fetchLogbook = useCallback(async () => {
-        if (!profileUserId) { setLogbookEntries([]); setIsLoadingLogbook(false); setLogbookError(null); return; }
-        setIsLoadingLogbook(true); setLogbookError(null);
+      // --- Fetch Logbook Data (with pagination) ---
+      const fetchLogbook = useCallback(async (page = 0, loadMore = false) => {
+        if (!profileUserId) {
+            setLogbookEntries([]); setIsLoadingLogbook(false); setLoadingMoreLogbook(false); setLogbookError(null); setHasMoreLogbook(false);
+            return;
+        }
+
+        if (loadMore) { setLoadingMoreLogbook(true); }
+        else { setIsLoadingLogbook(true); setLogbookEntries([]); setLogbookCurrentPage(0); setHasMoreLogbook(true); } // Reset on initial load
+        setLogbookError(null);
+
+        const from = page * LOGBOOK_PAGE_SIZE;
+        const to = from + LOGBOOK_PAGE_SIZE - 1;
+
         try {
           const { data, error } = await supabase
             .from('user_route_progress')
@@ -137,13 +149,15 @@ import React, { useState, useEffect, useCallback } from 'react';
               )
             `)
             .eq('user_id', profileUserId)
-            .not('sent_at', 'is', null)
-            .order('sent_at', { ascending: false });
+            .not('sent_at', 'is', null) // Only fetch sends for public logbook
+            .order('sent_at', { ascending: false }) // Order by send date
+            .range(from, to);
 
           if (error) {
             console.error("Error fetching public logbook:", error);
             setLogbookError("Failed to load climb log.");
-            setLogbookEntries([]);
+            if (!loadMore) setLogbookEntries([]);
+            setHasMoreLogbook(false);
           } else if (data) {
             const mappedEntries = data.map(item => {
               const routeData = item.route as any;
@@ -154,21 +168,26 @@ import React, { useState, useEffect, useCallback } from 'react';
                 user_progress_attempts: item.attempts,
                 user_progress_sent_at: item.sent_at,
                 user_progress_rating: item.rating,
-                user_progress_notes: null,
-                user_progress_wishlist: false,
+                user_progress_notes: null, // Notes are private
+                user_progress_wishlist: false, // Wishlist is private
                 user_progress_updated_at: item.updated_at,
               };
             });
-            setLogbookEntries(mappedEntries as LogbookEntry[]);
+            setLogbookEntries(prevEntries => loadMore ? [...prevEntries, ...mappedEntries] : mappedEntries);
+            setLogbookCurrentPage(page);
+            setHasMoreLogbook(data.length === LOGBOOK_PAGE_SIZE);
           } else {
-            setLogbookEntries([]);
+            if (!loadMore) setLogbookEntries([]);
+            setHasMoreLogbook(false);
           }
         } catch (err: any) {
           console.error("Unexpected error fetching public logbook:", err);
           setLogbookError(err.message || "An unexpected error occurred.");
-          setLogbookEntries([]);
+          if (!loadMore) setLogbookEntries([]);
+          setHasMoreLogbook(false);
         } finally {
           setIsLoadingLogbook(false);
+          setLoadingMoreLogbook(false);
         }
       }, [profileUserId]);
 
@@ -219,7 +238,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 
       // Fetch all data when profileUserId changes
       useEffect(() => {
-        // Reset loading states and visible counts when ID changes
+        // Reset loading states and pagination when ID changes
         setIsLoadingProfile(true);
         setIsLoadingLogbook(true);
         setIsLoadingStats(true);
@@ -228,13 +247,14 @@ import React, { useState, useEffect, useCallback } from 'react';
         setProfileError(null);
         setLogbookError(null);
         setStatsError(null);
-        setVisibleLogbookCount(INITIAL_ITEM_LIMIT); // Reset limit
+        setLogbookCurrentPage(0); // Reset pagination
+        setHasMoreLogbook(true); // Reset pagination
 
         // Fetch data
         fetchProfileData();
         fetchFollowStatus();
         fetchFollowCounts();
-        fetchLogbook();
+        fetchLogbook(0); // Fetch first page of logbook
         fetchStats();
       }, [profileUserId, fetchProfileData, fetchFollowStatus, fetchFollowCounts, fetchLogbook, fetchStats]);
 
@@ -275,7 +295,9 @@ import React, { useState, useEffect, useCallback } from 'react';
 
       // --- Show More Handler ---
       const handleShowMoreLogbook = () => {
-        setVisibleLogbookCount(logbookEntries.length);
+        if (!loadingMoreLogbook && hasMoreLogbook) {
+            fetchLogbook(logbookCurrentPage + 1, true);
+        }
       };
 
       // --- Rendering Functions ---
@@ -325,7 +347,6 @@ import React, { useState, useEffect, useCallback } from 'react';
       const userAvatar = isLoadingProfile ? '' : (profileData?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(currentDisplayName)}&background=random&color=fff`);
       const userHomeGymIds = isLoadingProfile ? [] : (profileData?.selected_gym_ids || []);
       const isOwnProfile = currentUser?.id === profileUserId;
-      const canShowMoreLogbook = logbookEntries.length > visibleLogbookCount;
 
       return (
         <div className="min-h-screen bg-gray-100 pb-16">
@@ -406,19 +427,24 @@ import React, { useState, useEffect, useCallback } from 'react';
             <div className="bg-white rounded-lg shadow min-h-[200px]">
               {activeTab === 'logbook' && (
                 <div>
-                  {isLoadingLogbook ? (
+                  {isLoadingLogbook && logbookEntries.length === 0 ? ( // Show initial loading only if no items are displayed yet
                     <div className="flex justify-center items-center p-6"> <Loader2 className="animate-spin text-accent-blue mr-2" size={24} /> Loading logbook... </div>
                   ) : logbookError ? (
                     <p className="text-center text-red-500 p-6">{logbookError}</p>
                   ) : logbookEntries.length > 0 ? (
                     <>
-                      {logbookEntries.slice(0, visibleLogbookCount).map(renderLogbookItem)}
-                      {canShowMoreLogbook && (
+                      {logbookEntries.map(renderLogbookItem)}
+                      {hasMoreLogbook && (
                         <button
                           onClick={handleShowMoreLogbook}
-                          className="w-full text-center text-sm text-accent-blue hover:underline font-medium py-3 border-t"
+                          disabled={loadingMoreLogbook}
+                          className="w-full text-center text-sm text-accent-blue hover:underline font-medium py-3 border-t disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
                         >
-                          Show More ({logbookEntries.length - visibleLogbookCount} remaining)
+                          {loadingMoreLogbook ? (
+                              <> <Loader2 className="animate-spin mr-2" size={16} /> Loading... </>
+                          ) : (
+                              'Show More'
+                          )}
                         </button>
                       )}
                     </>
