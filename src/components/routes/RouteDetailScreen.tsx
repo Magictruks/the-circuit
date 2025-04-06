@@ -33,6 +33,7 @@ import React, { useState, useEffect, useCallback } from 'react';
         const defaultProgress: UserProgress = { attempts: 0, sentDate: null, rating: null, notes: "", wishlist: false };
 
         const COMMENT_PAGE_SIZE = 5; // Number of comments per page
+        const BETA_PAGE_SIZE = 2; // Number of beta items per page
 
         const getGradeColorClass = (colorName: string | undefined): string => {
           if (!colorName) return 'bg-gray-400';
@@ -70,9 +71,11 @@ import React, { useState, useEffect, useCallback } from 'react';
           // State for Beta (fetched from DB)
           const [betaItems, setBetaItems] = useState<BetaContent[]>([]);
           const [isLoadingBeta, setIsLoadingBeta] = useState(false);
+          const [loadingMoreBeta, setLoadingMoreBeta] = useState(false); // Loading more state for beta
           const [betaError, setBetaError] = useState<string | null>(null);
-          // Default to 'text' beta tab
           const [activeBetaTab, setActiveBetaTab] = useState<Exclude<BetaType, 'drawing'>>('text');
+          const [betaCurrentPage, setBetaCurrentPage] = useState(0); // Pagination state for beta
+          const [hasMoreBeta, setHasMoreBeta] = useState(true); // Pagination state for beta
 
           // State for Comments (fetched from DB)
           const [comments, setComments] = useState<Comment[]>([]);
@@ -189,50 +192,91 @@ import React, { useState, useEffect, useCallback } from 'react';
           }, [route, isLoading, fetchComments]); // Rerun if route changes
 
 
-          // --- Fetch Beta ---
-          const fetchBeta = useCallback(async () => {
-            if (!route) { setBetaItems([]); return; }
-            setIsLoadingBeta(true); setBetaError(null);
+          // --- Fetch Beta (with pagination) ---
+          const fetchBeta = useCallback(async (page = 0, loadMore = false, betaType: Exclude<BetaType, 'drawing'>) => {
+            if (!route) {
+                setBetaItems([]); setIsLoadingBeta(false); setLoadingMoreBeta(false); setBetaError(null); setHasMoreBeta(false);
+                return;
+            }
+
+            if (loadMore) { setLoadingMoreBeta(true); }
+            else { setIsLoadingBeta(true); setBetaItems([]); setBetaCurrentPage(0); setHasMoreBeta(true); } // Reset on initial load or tab change
+            setBetaError(null);
+
+            const from = page * BETA_PAGE_SIZE;
+            const to = from + BETA_PAGE_SIZE - 1;
+
             try {
               const { data, error: fetchError } = await supabase
                 .from('route_beta')
                 .select(`*, profile:profiles ( display_name, avatar_url )`)
                 .eq('route_id', route.id)
-                .not('beta_type', 'eq', 'drawing') // Exclude drawings from fetch
-                .order('created_at', { ascending: false });
+                .eq('beta_type', betaType) // Filter by the active tab type
+                .order('created_at', { ascending: false })
+                .range(from, to);
 
-              if (fetchError) { setBetaError('Failed to load beta.'); setBetaItems([]); }
-              else if (data) {
-                const mappedBeta = data.map(beta => ({ ...beta, display_name: (beta.profile as any)?.display_name || undefined, avatar_url: (beta.profile as any)?.avatar_url || undefined, }));
-                setBetaItems(mappedBeta as BetaContent[]);
-              } else { setBetaItems([]); }
-            } catch (err) { setBetaError("An unexpected error occurred while loading beta."); setBetaItems([]); }
-            finally { setIsLoadingBeta(false); }
-          }, [route]);
+              if (fetchError) {
+                setBetaError(`Failed to load ${betaType} beta.`);
+                if (!loadMore) setBetaItems([]);
+                setHasMoreBeta(false);
+              } else if (data) {
+                const mappedBeta = data.map(beta => ({
+                  ...beta,
+                  display_name: (beta.profile as any)?.display_name || undefined,
+                  avatar_url: (beta.profile as any)?.avatar_url || undefined,
+                })) as BetaContent[];
+
+                setBetaItems(prevBeta => loadMore ? [...prevBeta, ...mappedBeta] : mappedBeta);
+                setBetaCurrentPage(page);
+                setHasMoreBeta(data.length === BETA_PAGE_SIZE);
+
+                // Fetch votes only for the newly added beta items if loading more
+                if (loadMore && currentUser && mappedBeta.length > 0) {
+                    fetchUserVotes(mappedBeta); // Fetch votes for the new items
+                } else if (!loadMore && currentUser && mappedBeta.length > 0) {
+                    fetchUserVotes(mappedBeta); // Fetch votes for the initial set
+                }
+
+              } else {
+                if (!loadMore) setBetaItems([]);
+                setHasMoreBeta(false);
+              }
+            } catch (err) {
+              setBetaError(`An unexpected error occurred while loading ${betaType} beta.`);
+              if (!loadMore) setBetaItems([]);
+              setHasMoreBeta(false);
+            } finally {
+              setIsLoadingBeta(false);
+              setLoadingMoreBeta(false);
+            }
+          }, [route, currentUser]); // Removed fetchUserVotes from deps, called manually
 
           // --- Fetch User Votes ---
            const fetchUserVotes = useCallback(async (currentBetaItems: BetaContent[]) => {
-               if (!currentUser || currentBetaItems.length === 0) { setUserVotes({}); return; }
+               if (!currentUser || currentBetaItems.length === 0) { return; } // Don't reset votes if no items
                const betaIds = currentBetaItems.map(b => b.id);
                try {
                    const { data, error } = await supabase.from('route_beta_votes').select('beta_id, vote_value').eq('user_id', currentUser.id).in('beta_id', betaIds);
-                   if (error) { console.error("[fetchUserVotes] Error fetching user votes:", error); setUserVotes({}); }
-                   else if (data) { const votesMap: UserVoteStatus = {}; data.forEach(vote => { votesMap[vote.beta_id] = vote.vote_value; }); setUserVotes(votesMap); }
-                   else { setUserVotes({}); }
-               } catch (err) { console.error("[fetchUserVotes] Unexpected error fetching user votes:", err); setUserVotes({}); }
+                   if (error) { console.error("[fetchUserVotes] Error fetching user votes:", error); }
+                   else if (data) {
+                       // Update votes, preserving existing ones
+                       setUserVotes(prevVotes => {
+                           const newVotes = { ...prevVotes };
+                           data.forEach(vote => { newVotes[vote.beta_id] = vote.vote_value; });
+                           return newVotes;
+                       });
+                   }
+               } catch (err) { console.error("[fetchUserVotes] Unexpected error fetching user votes:", err); }
            }, [currentUser]);
 
-          // Fetch beta and user votes when route data is available
+          // Fetch initial beta when route data is available or tab changes
           useEffect(() => {
-            if (route && !isLoading) { fetchBeta(); }
-            else { setBetaItems([]); setIsLoadingBeta(false); setBetaError(null); setUserVotes({}); }
-          }, [route, isLoading, fetchBeta]);
-
-          // Fetch user votes whenever betaItems change (and user exists)
-          useEffect(() => {
-              if (betaItems.length > 0 && currentUser) { fetchUserVotes(betaItems); }
-              else { setUserVotes({}); }
-          }, [betaItems, currentUser, fetchUserVotes]);
+            if (route && !isLoading) {
+              fetchBeta(0, false, activeBetaTab); // Fetch first page for the active tab
+            } else {
+              setBetaItems([]); setIsLoadingBeta(false); setLoadingMoreBeta(false); setBetaError(null); setHasMoreBeta(false); setUserVotes({});
+            }
+          }, [route, isLoading, activeBetaTab, fetchBeta]); // Add activeBetaTab dependency
 
 
           // --- Handle Beta Vote ---
@@ -311,6 +355,19 @@ import React, { useState, useEffect, useCallback } from 'react';
               }
           };
 
+          // --- Handle Show More Beta ---
+          const handleShowMoreBeta = () => {
+              if (!loadingMoreBeta && hasMoreBeta) {
+                  fetchBeta(betaCurrentPage + 1, true, activeBetaTab);
+              }
+          };
+
+          // --- Handle Tab Change ---
+          const handleTabChange = (tab: Exclude<BetaType, 'drawing'>) => {
+              setActiveBetaTab(tab);
+              // Fetching is handled by the useEffect dependency on activeBetaTab
+          };
+
 
           // --- Loading and Error Handling for Route Data ---
           if (isLoading) { return ( <div className="min-h-screen flex items-center justify-center bg-gray-100"> <Loader2 className="animate-spin text-accent-blue" size={48} /> </div> ); }
@@ -320,8 +377,6 @@ import React, { useState, useEffect, useCallback } from 'react';
           // Destructure route data, including location_name and removed_at
           const { id: routeId, name, grade, grade_color, location_name, setter, date_set, description, image_url, removed_at } = route;
           const displayLocation = location_name || 'Unknown Location';
-          // Filter beta based on the active tab *after* fetching (excluding drawings)
-          const filteredBeta = betaItems.filter(beta => beta.beta_type === activeBetaTab && beta.beta_type !== 'drawing');
           const isRemoved = !!removed_at; // Check if the route is removed
 
           return (
@@ -384,36 +439,54 @@ import React, { useState, useEffect, useCallback } from 'react';
                    <div className="flex justify-between items-center p-4 border-b"> <h2 className="text-lg font-semibold text-brand-gray">Community Beta</h2> <button onClick={() => onNavigate('addBeta', { routeId: routeId })} disabled={isRemoved} className="bg-accent-blue text-white text-xs font-semibold px-3 py-1 rounded-full hover:bg-opacity-90 flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"> <PlusCircle size={14}/> Add Beta </button> </div>
                    {/* Updated Tab Buttons */}
                    <div className="flex border-b">
-                      <button onClick={() => setActiveBetaTab('text')} className={`flex-1 py-2 text-center text-sm font-medium ${activeBetaTab === 'text' ? 'text-accent-blue border-b-2 border-accent-blue' : 'text-brand-gray hover:bg-gray-50'}`}><MessageSquareText size={16} className="inline mr-1 mb-0.5"/> Tips</button>
-                      <button onClick={() => setActiveBetaTab('video')} className={`flex-1 py-2 text-center text-sm font-medium ${activeBetaTab === 'video' ? 'text-accent-blue border-b-2 border-accent-blue' : 'text-brand-gray hover:bg-gray-50'}`}><Video size={16} className="inline mr-1 mb-0.5"/> Videos</button>
+                      <button onClick={() => handleTabChange('text')} className={`flex-1 py-2 text-center text-sm font-medium ${activeBetaTab === 'text' ? 'text-accent-blue border-b-2 border-accent-blue' : 'text-brand-gray hover:bg-gray-50'}`}><MessageSquareText size={16} className="inline mr-1 mb-0.5"/> Tips</button>
+                      <button onClick={() => handleTabChange('video')} className={`flex-1 py-2 text-center text-sm font-medium ${activeBetaTab === 'video' ? 'text-accent-blue border-b-2 border-accent-blue' : 'text-brand-gray hover:bg-gray-50'}`}><Video size={16} className="inline mr-1 mb-0.5"/> Videos</button>
                       {/* Removed Drawings Button */}
                    </div>
-                   <div className="p-4 space-y-4 max-h-60 overflow-y-auto">
-                      {isLoadingBeta && <div className="flex justify-center items-center py-4"><Loader2 className="animate-spin text-accent-blue" size={24} /></div>}
-                      {betaError && <p className="text-red-500 text-sm text-center py-4">{betaError}</p>}
-                      {!isLoadingBeta && !betaError && (
-                         filteredBeta.length > 0 ? filteredBeta.map(beta => {
-                            const userVote = userVotes[beta.id];
-                            const votingThisItem = isVoting[beta.id];
-                            const isCurrentUserBeta = beta.user_id === currentUser?.id;
-                            return (
-                               <div key={beta.id} className="flex gap-3 border-b pb-3 last:border-b-0">
-                                  <img src={getUserAvatarUrl(beta, beta.user_id)} alt="User avatar" className="w-8 h-8 rounded-full flex-shrink-0 mt-1"/>
-                                  <div className="flex-grow">
-                                     <button onClick={() => handleNavigateToProfile(beta.user_id)} disabled={isCurrentUserBeta} className={`text-sm font-medium text-brand-gray ${!isCurrentUserBeta ? 'hover:underline hover:text-accent-blue cursor-pointer' : 'cursor-default'}`}> {getUserDisplayName(beta.user_id, currentUser, beta)} </button>
-                                     {beta.beta_type === 'text' && <p className="text-sm text-gray-700 mt-1">{beta.text_content}</p>}
-                                     {beta.beta_type === 'video' && beta.content_url && ( <a href={beta.content_url} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline mt-1 block">Watch Video <Video size={14} className="inline ml-1"/></a> )}
-                                     {/* Removed Drawing rendering */}
-                                     <div className="flex items-center gap-3 text-xs text-gray-500 mt-2">
-                                        <span>{new Date(beta.created_at).toLocaleDateString()}</span>
-                                        {/* Disable voting if route removed */}
-                                        <button onClick={() => handleVote(beta.id, 1)} disabled={!currentUser || votingThisItem || isRemoved} className={`flex items-center gap-1 hover:text-green-600 disabled:opacity-50 ${userVote === 1 ? 'text-green-600 font-semibold' : 'text-gray-500'}`}> {votingThisItem && userVote !== -1 ? <Loader2 size={14} className="animate-spin"/> : <ThumbsUp size={14}/>} {beta.upvotes} </button>
-                                        <button onClick={() => handleVote(beta.id, -1)} disabled={!currentUser || votingThisItem || isRemoved} className={`flex items-center gap-1 hover:text-red-600 disabled:opacity-50 ${userVote === -1 ? 'text-red-600 font-semibold' : 'text-gray-500'}`}> {votingThisItem && userVote !== 1 ? <Loader2 size={14} className="animate-spin"/> : <ThumbsDown size={14}/>} </button>
-                                     </div>
-                                  </div>
-                               </div>
-                            );
-                         }) : ( <p className="text-sm text-center text-gray-500 py-4">No {activeBetaTab} beta available yet.</p> )
+                   <div className="p-4 space-y-4 max-h-96 overflow-y-auto"> {/* Increased max-height */}
+                      {isLoadingBeta && betaItems.length === 0 ? ( // Show initial loading only if no items are displayed yet
+                        <div className="flex justify-center items-center py-4"><Loader2 className="animate-spin text-accent-blue" size={24} /></div>
+                      ) : betaError ? (
+                        <p className="text-red-500 text-sm text-center py-4">{betaError}</p>
+                      ) : (
+                         <>
+                           {betaItems.length > 0 ? betaItems.map(beta => {
+                              const userVote = userVotes[beta.id];
+                              const votingThisItem = isVoting[beta.id];
+                              const isCurrentUserBeta = beta.user_id === currentUser?.id;
+                              return (
+                                 <div key={beta.id} className="flex gap-3 border-b pb-3 last:border-b-0">
+                                    <img src={getUserAvatarUrl(beta, beta.user_id)} alt="User avatar" className="w-8 h-8 rounded-full flex-shrink-0 mt-1"/>
+                                    <div className="flex-grow">
+                                       <button onClick={() => handleNavigateToProfile(beta.user_id)} disabled={isCurrentUserBeta} className={`text-sm font-medium text-brand-gray ${!isCurrentUserBeta ? 'hover:underline hover:text-accent-blue cursor-pointer' : 'cursor-default'}`}> {getUserDisplayName(beta.user_id, currentUser, beta)} </button>
+                                       {beta.beta_type === 'text' && <p className="text-sm text-gray-700 mt-1">{beta.text_content}</p>}
+                                       {beta.beta_type === 'video' && beta.content_url && ( <a href={beta.content_url} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline mt-1 block">Watch Video <Video size={14} className="inline ml-1"/></a> )}
+                                       {/* Removed Drawing rendering */}
+                                       <div className="flex items-center gap-3 text-xs text-gray-500 mt-2">
+                                          <span>{new Date(beta.created_at).toLocaleDateString()}</span>
+                                          {/* Disable voting if route removed */}
+                                          <button onClick={() => handleVote(beta.id, 1)} disabled={!currentUser || votingThisItem || isRemoved} className={`flex items-center gap-1 hover:text-green-600 disabled:opacity-50 ${userVote === 1 ? 'text-green-600 font-semibold' : 'text-gray-500'}`}> {votingThisItem && userVote !== -1 ? <Loader2 size={14} className="animate-spin"/> : <ThumbsUp size={14}/>} {beta.upvotes} </button>
+                                          <button onClick={() => handleVote(beta.id, -1)} disabled={!currentUser || votingThisItem || isRemoved} className={`flex items-center gap-1 hover:text-red-600 disabled:opacity-50 ${userVote === -1 ? 'text-red-600 font-semibold' : 'text-gray-500'}`}> {votingThisItem && userVote !== 1 ? <Loader2 size={14} className="animate-spin"/> : <ThumbsDown size={14}/>} </button>
+                                       </div>
+                                    </div>
+                                 </div>
+                              );
+                           }) : ( <p className="text-sm text-center text-gray-500 py-4">No {activeBetaTab} beta available yet.</p> )}
+                           {/* Show More Beta Button */}
+                           {hasMoreBeta && (
+                               <button
+                                   onClick={handleShowMoreBeta}
+                                   disabled={loadingMoreBeta}
+                                   className="w-full text-center text-sm text-accent-blue hover:underline font-medium py-2 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
+                               >
+                                   {loadingMoreBeta ? (
+                                       <> <Loader2 className="animate-spin mr-2" size={16} /> Loading... </>
+                                   ) : (
+                                       'Show More Beta'
+                                   )}
+                               </button>
+                           )}
+                         </>
                       )}
                    </div>
                 </section>
