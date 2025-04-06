@@ -12,7 +12,8 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
     }
 
     // Simple Modal Component (can be extracted later if needed)
-    const FeedbackModal: React.FC<{ title: string; feedbackType: 'contact' | 'suggestion'; onClose: () => void; currentUser: User | null }> = ({ title, feedbackType, onClose, currentUser }) => {
+    // UPDATED: Changed feedbackType prop to accept 'gym_suggestion'
+    const FeedbackModal: React.FC<{ title: string; feedbackType: 'contact' | 'gym_suggestion'; onClose: () => void; currentUser: User | null }> = ({ title, feedbackType, onClose, currentUser }) => {
       const [message, setMessage] = useState('');
       const [isSubmitting, setIsSubmitting] = useState(false);
       const [error, setError] = useState<string | null>(null);
@@ -319,7 +320,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
           {showSuggestionForm && (
             <FeedbackModal
               title="Suggest a Gym"
-              feedbackType="suggestion"
+              feedbackType="gym_suggestion" // UPDATED: Pass 'gym_suggestion'
               onClose={() => setShowSuggestionForm(false)}
               currentUser={currentUser}
             />

@@ -84,7 +84,8 @@ import { createClient } from '@supabase/supabase-js'
     };
 
     // --- Feedback API ---
-    export type FeedbackType = 'contact' | 'suggestion';
+    // UPDATED: Changed 'suggestion' to 'gym_suggestion'
+    export type FeedbackType = 'contact' | 'gym_suggestion';
 
     export const submitFeedback = async (feedbackType: FeedbackType, message: string) => {
       if (!message.trim()) {
@@ -100,6 +101,10 @@ import { createClient } from '@supabase/supabase-js'
         // Check for specific RLS violation error
         if (error.message.includes('check constraint violation') || error.message.includes('row level security policy')) {
            throw new Error("You must be logged in to submit feedback.");
+        }
+        // Check for constraint violation specifically
+        if (error.message.includes('feedback_feedback_type_check')) {
+            throw new Error("Invalid feedback type provided.");
         }
         throw new Error(`Failed to submit feedback: ${error.message}`);
       }

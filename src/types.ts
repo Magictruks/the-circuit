@@ -241,12 +241,13 @@ import type { User } from '@supabase/supabase-js';
                   };
 
                   // NEW: Feedback Type
+                  // UPDATED: Changed 'suggestion' to 'gym_suggestion'
                   export interface Feedback {
                     id: string;
                     created_at: string;
                     user_id: string | null;
                     email: string | null;
-                    feedback_type: 'contact' | 'suggestion';
+                    feedback_type: 'contact' | 'gym_suggestion';
                     message: string;
                     status: 'new' | 'reviewed' | 'archived';
                   }

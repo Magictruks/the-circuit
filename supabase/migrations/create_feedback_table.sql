@@ -9,7 +9,7 @@
           - `created_at` (timestamptz, default: now())
           - `user_id` (uuid, foreign key to auth.users, nullable): ID of the user submitting feedback (if logged in).
           - `email` (text, nullable): User's email (captured automatically if logged in).
-          - `feedback_type` (text, not null): Type of feedback ('contact', 'suggestion', etc.).
+          - `feedback_type` (text, not null): Type of feedback ('contact', 'gym_suggestion'). -- UPDATED
           - `message` (text, not null): The actual feedback message.
           - `status` (text, default: 'new'): Status of the feedback (e.g., 'new', 'reviewed', 'archived').
       2. Security
@@ -29,7 +29,7 @@
       created_at timestamptz DEFAULT now(),
       user_id uuid REFERENCES auth.users(id) ON DELETE SET NULL, -- Allow feedback even if user is deleted
       email text, -- Store email for easier contact, populated by trigger
-      feedback_type text NOT NULL CHECK (feedback_type IN ('contact', 'suggestion')), -- Enforce specific types
+      feedback_type text NOT NULL CHECK (feedback_type IN ('contact', 'gym_suggestion')), -- UPDATED: Changed 'suggestion' to 'gym_suggestion'
       message text NOT NULL CHECK (char_length(message) > 0), -- Ensure message is not empty
       status text NOT NULL DEFAULT 'new' CHECK (status IN ('new', 'reviewed', 'archived')) -- Feedback status
     );
@@ -38,13 +38,14 @@
     ALTER TABLE feedback ENABLE ROW LEVEL SECURITY;
 
     -- 3. RLS Policies
+    DROP POLICY IF EXISTS "Allow authenticated users to insert their own feedback" ON feedback;
     CREATE POLICY "Allow authenticated users to insert their own feedback"
       ON feedback
       FOR INSERT
       TO authenticated
       WITH CHECK (auth.uid() = user_id);
 
-    -- Allow admin access (service_role) - Adjust as needed for your admin setup
+    DROP POLICY IF EXISTS "Allow service_role full access" ON feedback;
     CREATE POLICY "Allow service_role full access"
       ON feedback
       FOR ALL
