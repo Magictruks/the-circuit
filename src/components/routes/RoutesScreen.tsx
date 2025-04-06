@@ -28,6 +28,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
             return -1; // Return -1 for non-V grades or parsing errors
         };
 
+        const ROUTE_PAGE_SIZE = 10; // Number of routes per page
 
         const RoutesScreen: React.FC<RoutesScreenProps> = ({
           activeGymId,
@@ -44,7 +45,10 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
           const [commentCountsMap, setCommentCountsMap] = useState<Map<string, number>>(new Map());
           const [gymLocations, setGymLocations] = useState<LocationData[]>([]);
           const [loading, setLoading] = useState(false);
+          const [loadingMoreRoutes, setLoadingMoreRoutes] = useState(false); // State for loading more routes
           const [error, setError] = useState<string | null>(null);
+          const [currentPage, setCurrentPage] = useState(0); // Track current page (0-indexed)
+          const [hasMoreRoutes, setHasMoreRoutes] = useState(true); // Track if more routes might exist
 
           // Filter States
           const [selectedLocationFilter, setSelectedLocationFilter] = useState<string>('');
@@ -68,72 +72,118 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
             }
           }, [initialSearchTerm, didFocusOnMount]);
 
-          useEffect(() => {
-            const fetchAllRouteData = async () => {
-              if (!activeGymId) {
-                setBaseRoutes([]); setUserProgressMap(new Map()); setBetaCountsMap(new Map());
-                setCommentCountsMap(new Map()); setGymLocations([]); setError(null); setLoading(false);
-                return;
-              }
-              setLoading(true); setError(null); setBaseRoutes([]); setUserProgressMap(new Map());
-              setBetaCountsMap(new Map()); setCommentCountsMap(new Map()); setGymLocations([]);
+          // --- Fetch Route Data (with pagination) ---
+          const fetchAllRouteData = useCallback(async (page = 0, loadMore = false) => {
+            if (!activeGymId) {
+              setBaseRoutes([]); setUserProgressMap(new Map()); setBetaCountsMap(new Map());
+              setCommentCountsMap(new Map()); setGymLocations([]); setError(null);
+              setLoading(false); setLoadingMoreRoutes(false); setHasMoreRoutes(false);
+              return;
+            }
 
-              try {
+            if (loadMore) { setLoadingMoreRoutes(true); }
+            else {
+              setLoading(true); setBaseRoutes([]); setCurrentPage(0); setHasMoreRoutes(true);
+              // Reset auxiliary maps on initial load/filter change
+              setUserProgressMap(new Map()); setBetaCountsMap(new Map()); setCommentCountsMap(new Map());
+            }
+            setError(null);
+
+            const from = page * ROUTE_PAGE_SIZE;
+            const to = from + ROUTE_PAGE_SIZE - 1;
+
+            try {
+              // Fetch locations only on initial load (page 0)
+              if (page === 0) {
                 const { data: locationsData, error: locationsError } = await supabase
                   .from('locations').select('*').eq('gym_id', activeGymId).order('name', { ascending: true });
                 if (locationsError) console.error('[RoutesScreen] Error fetching locations:', locationsError.message);
                 else setGymLocations(locationsData || []);
+              }
 
-                // Fetch only routes that are NOT removed
-                const { data: routesData, error: routesError } = await supabase
-                  .from('routes')
-                  .select(`*, location_name:locations ( name )`)
-                  .eq('gym_id', activeGymId)
-                  .is('removed_at', null) // <-- Filter out removed routes
-                  .order('date_set', { ascending: false });
+              // Fetch only routes that are NOT removed, using pagination
+              const { data: routesData, error: routesError } = await supabase
+                .from('routes')
+                .select(`*, location_name:locations ( name )`)
+                .eq('gym_id', activeGymId)
+                .is('removed_at', null) // Filter out removed routes
+                .order('date_set', { ascending: false }) // Keep default sort for pagination
+                .range(from, to); // Apply pagination
 
-                if (routesError) throw new Error(`Failed to load routes: ${routesError.message}`);
-                if (!routesData || routesData.length === 0) { setBaseRoutes([]); setLoading(false); return; }
+              if (routesError) throw new Error(`Failed to load routes: ${routesError.message}`);
 
-                const mappedRoutes = routesData.map(r => ({ ...r, location_name: (r.location_name as any)?.name || null }));
-                setBaseRoutes(mappedRoutes as RouteData[]);
-                const routeIds = mappedRoutes.map(r => r.id);
+              if (!routesData || routesData.length === 0) {
+                if (!loadMore) setBaseRoutes([]); // Clear if initial load yields nothing
+                setHasMoreRoutes(false); // No more routes to load
+                setLoading(false); setLoadingMoreRoutes(false);
+                return;
+              }
 
-                let progressMap = new Map<string, UserRouteProgressData>();
-                if (currentUser && routeIds.length > 0) {
-                  const { data: progressData, error: progressError } = await supabase
-                    .from('user_route_progress').select('*').eq('user_id', currentUser.id).in('route_id', routeIds);
-                  if (progressError) console.error('[RoutesScreen] Error fetching user progress:', progressError.message);
-                  else if (progressData) progressData.forEach(p => progressMap.set(p.route_id, p));
-                  setUserProgressMap(progressMap);
-                }
+              const mappedRoutes = routesData.map(r => ({ ...r, location_name: (r.location_name as any)?.name || null })) as RouteData[];
 
-                let betaMap = new Map<string, number>();
-                if (routeIds.length > 0) {
-                  const { data: betaCountsData, error: betaCountsError } = await supabase.rpc('get_route_beta_counts', { route_ids: routeIds });
-                  if (betaCountsError) console.error('[RoutesScreen] Error fetching beta counts via RPC:', betaCountsError.message);
-                  else if (betaCountsData) (betaCountsData as CountResult[]).forEach(item => betaMap.set(item.route_id, item.count));
-                  setBetaCountsMap(betaMap);
-                }
+              // Append or replace routes based on loadMore flag
+              setBaseRoutes(prevRoutes => loadMore ? [...prevRoutes, ...mappedRoutes] : mappedRoutes);
+              setCurrentPage(page);
+              setHasMoreRoutes(mappedRoutes.length === ROUTE_PAGE_SIZE); // Check if a full page was fetched
 
-                let commentMap = new Map<string, number>();
-                if (routeIds.length > 0) {
-                  const { data: commentCountsData, error: commentCountsError } = await supabase.rpc('get_route_comment_counts', { route_ids: routeIds });
-                  if (commentCountsError) console.error('[RoutesScreen] Error fetching comment counts via RPC:', commentCountsError.message);
-                  else if (commentCountsData) (commentCountsData as CountResult[]).forEach(item => commentMap.set(item.route_id, item.count));
-                  setCommentCountsMap(commentMap);
-                }
-              } catch (err: any) {
-                console.error("[RoutesScreen] Unexpected error fetching route data:", err);
-                setError(err.message || "An unexpected error occurred.");
+              const routeIds = mappedRoutes.map(r => r.id); // IDs from the *current* page fetch
+
+              // Fetch auxiliary data only for the newly loaded routes if loading more
+              // Or for all routes if initial load
+              const idsToFetchAuxData = loadMore ? routeIds : baseRoutes.map(r => r.id).concat(routeIds);
+
+              let progressMap = loadMore ? new Map(userProgressMap) : new Map<string, UserRouteProgressData>();
+              if (currentUser && idsToFetchAuxData.length > 0) {
+                const { data: progressData, error: progressError } = await supabase
+                  .from('user_route_progress').select('*').eq('user_id', currentUser.id).in('route_id', idsToFetchAuxData);
+                if (progressError) console.error('[RoutesScreen] Error fetching user progress:', progressError.message);
+                else if (progressData) progressData.forEach(p => progressMap.set(p.route_id, p));
+                setUserProgressMap(progressMap); // Update the map
+              }
+
+              let betaMap = loadMore ? new Map(betaCountsMap) : new Map<string, number>();
+              if (idsToFetchAuxData.length > 0) {
+                const { data: betaCountsData, error: betaCountsError } = await supabase.rpc('get_route_beta_counts', { route_ids: idsToFetchAuxData });
+                if (betaCountsError) console.error('[RoutesScreen] Error fetching beta counts via RPC:', betaCountsError.message);
+                else if (betaCountsData) (betaCountsData as CountResult[]).forEach(item => betaMap.set(item.route_id, item.count));
+                setBetaCountsMap(betaMap); // Update the map
+              }
+
+              let commentMap = loadMore ? new Map(commentCountsMap) : new Map<string, number>();
+              if (idsToFetchAuxData.length > 0) {
+                const { data: commentCountsData, error: commentCountsError } = await supabase.rpc('get_route_comment_counts', { route_ids: idsToFetchAuxData });
+                if (commentCountsError) console.error('[RoutesScreen] Error fetching comment counts via RPC:', commentCountsError.message);
+                else if (commentCountsData) (commentCountsData as CountResult[]).forEach(item => commentMap.set(item.route_id, item.count));
+                setCommentCountsMap(commentMap); // Update the map
+              }
+
+            } catch (err: any) {
+              console.error("[RoutesScreen] Unexpected error fetching route data:", err);
+              setError(err.message || "An unexpected error occurred.");
+              if (!loadMore) {
                 setBaseRoutes([]); setUserProgressMap(new Map()); setBetaCountsMap(new Map());
                 setCommentCountsMap(new Map()); setGymLocations([]);
-              } finally { setLoading(false); }
-            };
-            fetchAllRouteData();
-          }, [activeGymId, currentUser]);
+              }
+              setHasMoreRoutes(false);
+            } finally {
+              setLoading(false);
+              setLoadingMoreRoutes(false);
+            }
+          }, [activeGymId, currentUser, userProgressMap, betaCountsMap, commentCountsMap]); // Include maps in dependencies for loadMore updates
 
-          // Get unique grades for the filter dropdown
+          // Fetch initial data on mount or when gym changes
+          useEffect(() => {
+            fetchAllRouteData(0); // Fetch first page
+          }, [activeGymId, currentUser]); // Removed fetchAllRouteData from here to prevent loop
+
+          // --- Handle Show More ---
+          const handleShowMore = () => {
+              if (!loadingMoreRoutes && hasMoreRoutes) {
+                  fetchAllRouteData(currentPage + 1, true); // Fetch next page, indicate it's loading more
+              }
+          };
+
+          // Get unique grades for the filter dropdown (based on currently loaded routes)
           const availableGrades = useMemo(() => {
             const grades = new Set(baseRoutes.map(r => r.grade).filter(Boolean));
             return Array.from(grades).sort((a, b) => {
@@ -144,10 +194,9 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
             });
           }, [baseRoutes]);
 
-          // Memoize augmented, filtered, and sorted routes
+          // Memoize augmented, filtered, and sorted routes (operates on currently loaded baseRoutes)
           const augmentedFilteredAndSortedRoutes = useMemo(() => {
-            // 1. Augment routes with progress, beta, comments, etc.
-            // No need to filter removed_at here as it's done during fetch
+            // 1. Augment routes
             const augmentedRoutes = baseRoutes.map(route => {
               const progress = userProgressMap.get(route.id);
               const betaCount = betaCountsMap.get(route.id) || 0;
@@ -168,7 +217,6 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 
             // 2. Filter routes
             let filteredRoutes = augmentedRoutes;
-            // Search Term Filter
             if (searchTerm) {
               const lowerSearchTerm = searchTerm.toLowerCase();
               filteredRoutes = filteredRoutes.filter(route =>
@@ -177,15 +225,12 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
                 (route.location_name?.toLowerCase() || '').includes(lowerSearchTerm)
               );
             }
-            // Location Filter
             if (selectedLocationFilter) {
               filteredRoutes = filteredRoutes.filter(route => route.location_id === selectedLocationFilter);
             }
-            // Grade Filter
             if (selectedGradeFilter) {
               filteredRoutes = filteredRoutes.filter(route => route.grade === selectedGradeFilter);
             }
-            // Status Filter
             if (selectedStatusFilter !== 'all') {
               filteredRoutes = filteredRoutes.filter(route => {
                 if (selectedStatusFilter === 'wishlist') return route.isOnWishlist;
@@ -196,19 +241,10 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
             // 3. Sort routes
             const sortedRoutes = [...filteredRoutes].sort((a, b) => {
               switch (selectedSortOption) {
-                case 'grade_hardest':
-                  return getVGradeValue(b.grade) - getVGradeValue(a.grade);
-                case 'grade_easiest':
-                  return getVGradeValue(a.grade) - getVGradeValue(b.grade);
-                case 'rating_highest':
-                  // Sort by rating (desc), put nulls last
-                  const ratingA = a.rating ?? -1;
-                  const ratingB = b.rating ?? -1;
-                  return ratingB - ratingA;
-                case 'date_newest':
-                default:
-                  // Already fetched newest first, but explicit sort is safer
-                  return new Date(b.date_set).getTime() - new Date(a.date_set).getTime();
+                case 'grade_hardest': return getVGradeValue(b.grade) - getVGradeValue(a.grade);
+                case 'grade_easiest': return getVGradeValue(a.grade) - getVGradeValue(b.grade);
+                case 'rating_highest': const ratingA = a.rating ?? -1; const ratingB = b.rating ?? -1; return ratingB - ratingA;
+                case 'date_newest': default: return new Date(b.date_set).getTime() - new Date(a.date_set).getTime();
               }
             });
 
@@ -292,10 +328,31 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 
               {/* Route List */}
               <main className="flex-grow p-4 space-y-3 overflow-y-auto pb-20">
-                {loading ? ( <div className="flex justify-center items-center pt-10"> <Loader2 className="animate-spin text-accent-blue mr-2" size={24} /> <p className="text-brand-gray">Loading routes...</p> </div>
-                ) : error ? ( <p className="text-center text-red-500 mt-8">{error}</p>
-                ) : augmentedFilteredAndSortedRoutes.length > 0 ? ( augmentedFilteredAndSortedRoutes.map(route => ( <RouteCard key={route.id} route={route} onClick={() => onNavigate('routeDetail', { routeId: route.id })} /> ))
-                ) : ( <p className="text-center text-gray-500 mt-8"> {baseRoutes.length === 0 ? 'No active routes found for this gym yet.' : 'No routes found matching your criteria.'} </p> )}
+                {loading && baseRoutes.length === 0 ? ( // Show initial loading only if no routes are displayed yet
+                  <div className="flex justify-center items-center pt-10"> <Loader2 className="animate-spin text-accent-blue mr-2" size={24} /> <p className="text-brand-gray">Loading routes...</p> </div>
+                ) : error ? (
+                  <p className="text-center text-red-500 mt-8">{error}</p>
+                ) : augmentedFilteredAndSortedRoutes.length > 0 ? (
+                  <>
+                    {augmentedFilteredAndSortedRoutes.map(route => ( <RouteCard key={route.id} route={route} onClick={() => onNavigate('routeDetail', { routeId: route.id })} /> ))}
+                    {/* Show More Button */}
+                    {hasMoreRoutes && (
+                        <button
+                            onClick={handleShowMore}
+                            disabled={loadingMoreRoutes}
+                            className="w-full mt-3 text-center text-sm text-accent-blue hover:underline font-medium py-2 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
+                        >
+                            {loadingMoreRoutes ? (
+                                <> <Loader2 className="animate-spin mr-2" size={16} /> Loading... </>
+                            ) : (
+                                'Show More Routes'
+                            )}
+                        </button>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-center text-gray-500 mt-8"> {baseRoutes.length === 0 && !loading ? 'No active routes found for this gym yet.' : 'No routes found matching your criteria.'} </p>
+                )}
               </main>
             </div>
           );
