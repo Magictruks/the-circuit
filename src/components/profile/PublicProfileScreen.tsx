@@ -37,31 +37,34 @@ import React, { useState, useEffect, useCallback } from 'react';
         highestGrade: string | null;
     }
 
+    const INITIAL_ITEM_LIMIT = 5; // Define limit constant
+
     const PublicProfileScreen: React.FC<PublicProfileScreenProps> = ({ currentUser, viewingProfileId, onNavigate, getGymNameById, onBack }) => {
       const [profileData, setProfileData] = useState<UserMetadata | null>(null);
-      const [isLoadingProfile, setIsLoadingProfile] = useState(true); // Still track loading for header
+      const [isLoadingProfile, setIsLoadingProfile] = useState(true);
       const [profileError, setProfileError] = useState<string | null>(null);
 
       const [activeTab, setActiveTab] = useState<PublicProfileTab>('logbook');
 
       // State for Logbook
       const [logbookEntries, setLogbookEntries] = useState<LogbookEntry[]>([]);
-      const [isLoadingLogbook, setIsLoadingLogbook] = useState(true); // Start as true
+      const [isLoadingLogbook, setIsLoadingLogbook] = useState(true);
       const [logbookError, setLogbookError] = useState<string | null>(null);
+      const [visibleLogbookCount, setVisibleLogbookCount] = useState(INITIAL_ITEM_LIMIT); // Limit state
 
       // State for Stats
       const [userStats, setUserStats] = useState<UserStats | null>(null);
-      const [isLoadingStats, setIsLoadingStats] = useState(true); // Start as true
+      const [isLoadingStats, setIsLoadingStats] = useState(true);
       const [statsError, setStatsError] = useState<string | null>(null);
 
       // State for Following
       const [isFollowing, setIsFollowing] = useState(false);
-      const [isLoadingFollowStatus, setIsLoadingFollowStatus] = useState(true); // Start as true
+      const [isLoadingFollowStatus, setIsLoadingFollowStatus] = useState(true);
       const [isUpdatingFollow, setIsUpdatingFollow] = useState(false);
       const [followCounts, setFollowCounts] = useState<FollowCounts>({ followers: 0, following: 0 });
-      const [isLoadingFollowCounts, setIsLoadingFollowCounts] = useState(true); // Start as true
+      const [isLoadingFollowCounts, setIsLoadingFollowCounts] = useState(true);
 
-      const profileUserId = viewingProfileId; // Use the passed ID directly
+      const profileUserId = viewingProfileId;
 
       // --- Fetch Profile Data ---
       const fetchProfileData = useCallback(async () => {
@@ -91,7 +94,6 @@ import React, { useState, useEffect, useCallback } from 'react';
 
       // --- Fetch Follow Status ---
       const fetchFollowStatus = useCallback(async () => {
-        // Only check if a user is logged in and viewing someone else's profile
         if (!currentUser || !profileUserId || currentUser.id === profileUserId) {
           setIsFollowing(false); setIsLoadingFollowStatus(false); return;
         }
@@ -125,19 +127,18 @@ import React, { useState, useEffect, useCallback } from 'react';
         if (!profileUserId) { setLogbookEntries([]); setIsLoadingLogbook(false); setLogbookError(null); return; }
         setIsLoadingLogbook(true); setLogbookError(null);
         try {
-          // Fetch only SENT climbs for public view
           const { data, error } = await supabase
             .from('user_route_progress')
             .select(`
               attempts, sent_at, rating, updated_at,
               route:routes!inner(
-                id, gym_id, name, grade, grade_color, date_set, location_id,
+                id, gym_id, name, grade, grade_color, date_set, location_id, removed_at,
                 location_name:locations ( name )
               )
             `)
             .eq('user_id', profileUserId)
-            .not('sent_at', 'is', null) // Only fetch sends
-            .order('sent_at', { ascending: false }); // Order by send date
+            .not('sent_at', 'is', null)
+            .order('sent_at', { ascending: false });
 
           if (error) {
             console.error("Error fetching public logbook:", error);
@@ -152,9 +153,9 @@ import React, { useState, useEffect, useCallback } from 'react';
                 location_name: locationInfo?.name || null,
                 user_progress_attempts: item.attempts,
                 user_progress_sent_at: item.sent_at,
-                user_progress_rating: item.rating, // Keep rating if available
-                user_progress_notes: null, // Don't expose private notes
-                user_progress_wishlist: false, // Don't expose wishlist status
+                user_progress_rating: item.rating,
+                user_progress_notes: null,
+                user_progress_wishlist: false,
                 user_progress_updated_at: item.updated_at,
               };
             });
@@ -176,7 +177,6 @@ import React, { useState, useEffect, useCallback } from 'react';
           if (!profileUserId) { setUserStats(null); setIsLoadingStats(false); setStatsError(null); return; }
           setIsLoadingStats(true); setStatsError(null);
           try {
-              // Same logic as ProfileScreen, based on sent climbs
               const { data, error } = await supabase
                   .from('user_route_progress')
                   .select(` route_id, route:routes ( grade ) `)
@@ -219,7 +219,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 
       // Fetch all data when profileUserId changes
       useEffect(() => {
-        // Reset loading states when ID changes
+        // Reset loading states and visible counts when ID changes
         setIsLoadingProfile(true);
         setIsLoadingLogbook(true);
         setIsLoadingStats(true);
@@ -228,6 +228,7 @@ import React, { useState, useEffect, useCallback } from 'react';
         setProfileError(null);
         setLogbookError(null);
         setStatsError(null);
+        setVisibleLogbookCount(INITIAL_ITEM_LIMIT); // Reset limit
 
         // Fetch data
         fetchProfileData();
@@ -239,7 +240,6 @@ import React, { useState, useEffect, useCallback } from 'react';
 
       // --- Follow/Unfollow Handler ---
       const handleFollowToggle = async () => {
-        // Requires logged-in user
         if (!currentUser || !profileUserId || currentUser.id === profileUserId || isUpdatingFollow) return;
         setIsUpdatingFollow(true);
         try {
@@ -252,7 +252,6 @@ import React, { useState, useEffect, useCallback } from 'react';
             setIsFollowing(true);
             setFollowCounts(prev => ({ ...prev, followers: prev.followers + 1 }));
 
-            // Log follow activity
             const activityDetails: ActivityLogDetails = {
                 followed_user_id: profileUserId,
                 followed_user_name: profileData?.display_name || 'User',
@@ -274,15 +273,21 @@ import React, { useState, useEffect, useCallback } from 'react';
         }
       };
 
+      // --- Show More Handler ---
+      const handleShowMoreLogbook = () => {
+        setVisibleLogbookCount(logbookEntries.length);
+      };
+
       // --- Rendering Functions ---
       const renderLogbookItem = (entry: LogbookEntry) => {
         const displayLocation = entry.location_name || 'Unknown Location';
+        const isRemoved = !!entry.removed_at;
         return (
-          <div key={entry.id} onClick={() => onNavigate('routeDetail', { routeId: entry.id })} className="flex items-center gap-3 p-3 border-b last:border-b-0 hover:bg-gray-50 cursor-pointer">
+          <div key={entry.id} onClick={() => onNavigate('routeDetail', { routeId: entry.id })} className={`flex items-center gap-3 p-3 border-b last:border-b-0 ${isRemoved ? 'opacity-60 bg-gray-50' : 'hover:bg-gray-50 cursor-pointer'}`}>
             <div className={`w-8 h-8 ${getGradeColorClass(entry.grade_color)} rounded-full flex items-center justify-center text-white font-bold text-xs flex-shrink-0`}> {entry.grade} </div>
             <div className="flex-grow overflow-hidden">
-              <p className="font-medium text-brand-gray truncate">{entry.name}</p>
-              <p className="text-xs text-gray-500"> {displayLocation} - Sent: {entry.user_progress_sent_at ? new Date(entry.user_progress_sent_at).toLocaleDateString() : 'N/A'} </p>
+              <p className={`font-medium text-brand-gray truncate ${isRemoved ? 'line-through' : ''}`}>{entry.name}</p>
+              <p className="text-xs text-gray-500"> {displayLocation} - Sent: {entry.user_progress_sent_at ? new Date(entry.user_progress_sent_at).toLocaleDateString() : 'N/A'} {isRemoved && '(Removed)'} </p>
             </div>
             <CheckCircle size={18} className="text-green-500 flex-shrink-0" title={`Sent (${entry.user_progress_attempts} attempts)`} />
           </div>
@@ -303,10 +308,6 @@ import React, { useState, useEffect, useCallback } from 'react';
       };
 
       // --- Loading / Error States for Profile ---
-      // REMOVED the top-level loading check
-      // if (isLoadingProfile) { return <div className="min-h-screen flex items-center justify-center"><Loader2 className="animate-spin text-accent-blue" size={32} /></div>; }
-
-      // Handle profile-specific errors after the main layout renders
       if (profileError) {
         return (
           <div className="min-h-screen bg-gray-100 flex flex-col items-center justify-center p-4 text-center">
@@ -323,7 +324,8 @@ import React, { useState, useEffect, useCallback } from 'react';
       const currentDisplayName = isLoadingProfile ? 'Loading...' : (profileData?.display_name || 'Climber');
       const userAvatar = isLoadingProfile ? '' : (profileData?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(currentDisplayName)}&background=random&color=fff`);
       const userHomeGymIds = isLoadingProfile ? [] : (profileData?.selected_gym_ids || []);
-      const isOwnProfile = currentUser?.id === profileUserId; // Check if viewing own profile
+      const isOwnProfile = currentUser?.id === profileUserId;
+      const canShowMoreLogbook = logbookEntries.length > visibleLogbookCount;
 
       return (
         <div className="min-h-screen bg-gray-100 pb-16">
@@ -369,11 +371,11 @@ import React, { useState, useEffect, useCallback } from 'react';
                 </div>
              </div>
              {/* Follow/Unfollow Button */}
-             {currentUser && !isOwnProfile && ( // Only show if logged in and not viewing own profile
+             {currentUser && !isOwnProfile && (
                 <div className="absolute bottom-4 right-4 z-10">
                    <button
                       onClick={handleFollowToggle}
-                      disabled={isLoadingFollowStatus || isUpdatingFollow || isLoadingProfile} // Disable while profile loads too
+                      disabled={isLoadingFollowStatus || isUpdatingFollow || isLoadingProfile}
                       className={`px-4 py-1.5 rounded-full text-sm font-semibold transition-colors duration-200 flex items-center gap-1.5 disabled:opacity-60 ${
                          isFollowing
                             ? 'bg-white text-brand-green hover:bg-gray-200'
@@ -402,7 +404,29 @@ import React, { useState, useEffect, useCallback } from 'react';
 
             {/* Tab Content */}
             <div className="bg-white rounded-lg shadow min-h-[200px]">
-              {activeTab === 'logbook' && ( <div> {isLoadingLogbook ? ( <div className="flex justify-center items-center p-6"> <Loader2 className="animate-spin text-accent-blue mr-2" size={24} /> Loading logbook... </div> ) : logbookError ? ( <p className="text-center text-red-500 p-6">{logbookError}</p> ) : logbookEntries.length > 0 ? ( logbookEntries.map(renderLogbookItem) ) : ( <p className="text-center text-gray-500 p-6">No public climbs logged yet.</p> )} </div> )}
+              {activeTab === 'logbook' && (
+                <div>
+                  {isLoadingLogbook ? (
+                    <div className="flex justify-center items-center p-6"> <Loader2 className="animate-spin text-accent-blue mr-2" size={24} /> Loading logbook... </div>
+                  ) : logbookError ? (
+                    <p className="text-center text-red-500 p-6">{logbookError}</p>
+                  ) : logbookEntries.length > 0 ? (
+                    <>
+                      {logbookEntries.slice(0, visibleLogbookCount).map(renderLogbookItem)}
+                      {canShowMoreLogbook && (
+                        <button
+                          onClick={handleShowMoreLogbook}
+                          className="w-full text-center text-sm text-accent-blue hover:underline font-medium py-3 border-t"
+                        >
+                          Show More ({logbookEntries.length - visibleLogbookCount} remaining)
+                        </button>
+                      )}
+                    </>
+                  ) : (
+                    <p className="text-center text-gray-500 p-6">No public climbs logged yet.</p>
+                  )}
+                </div>
+              )}
               {activeTab === 'stats' && renderStats()}
             </div>
           </main>

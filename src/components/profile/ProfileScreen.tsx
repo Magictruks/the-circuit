@@ -26,8 +26,6 @@ import React, { useState, useEffect, useCallback } from 'react';
        viewingProfileId: string | null;
        onNavigate: (view: AppView, data?: NavigationData) => void;
        getGymNameById: (id: string | null) => string;
-       // Add previousAppView if needed for back navigation logic within ProfileScreen itself
-       // previousAppView?: AppView;
     }
 
     type ProfileTab = 'logbook' | 'wishlist' | 'stats';
@@ -38,9 +36,11 @@ import React, { useState, useEffect, useCallback } from 'react';
         highestGrade: string | null;
     }
 
-    const ProfileScreen: React.FC<ProfileScreenProps> = ({ currentUser, viewingProfileId, onNavigate, getGymNameById /*, previousAppView */ }) => {
+    const INITIAL_ITEM_LIMIT = 5;
+
+    const ProfileScreen: React.FC<ProfileScreenProps> = ({ currentUser, viewingProfileId, onNavigate, getGymNameById }) => {
       const [profileData, setProfileData] = useState<UserMetadata | null>(null);
-      const [isLoadingProfile, setIsLoadingProfile] = useState(true); // Still track loading for header
+      const [isLoadingProfile, setIsLoadingProfile] = useState(true);
       const [profileError, setProfileError] = useState<string | null>(null);
 
       const [activeTab, setActiveTab] = useState<ProfileTab>('logbook');
@@ -51,25 +51,27 @@ import React, { useState, useEffect, useCallback } from 'react';
 
       // State for Logbook
       const [logbookEntries, setLogbookEntries] = useState<LogbookEntry[]>([]);
-      const [isLoadingLogbook, setIsLoadingLogbook] = useState(true); // Start as true
+      const [isLoadingLogbook, setIsLoadingLogbook] = useState(true);
       const [logbookError, setLogbookError] = useState<string | null>(null);
+      const [visibleLogbookCount, setVisibleLogbookCount] = useState(INITIAL_ITEM_LIMIT); // Limit state
 
       // State for Wishlist
       const [wishlistItems, setWishlistItems] = useState<RouteData[]>([]);
-      const [isLoadingWishlist, setIsLoadingWishlist] = useState(true); // Start as true
+      const [isLoadingWishlist, setIsLoadingWishlist] = useState(true);
       const [wishlistError, setWishlistError] = useState<string | null>(null);
+      const [visibleWishlistCount, setVisibleWishlistCount] = useState(INITIAL_ITEM_LIMIT); // Limit state
 
       // State for Stats
       const [userStats, setUserStats] = useState<UserStats | null>(null);
-      const [isLoadingStats, setIsLoadingStats] = useState(true); // Start as true
+      const [isLoadingStats, setIsLoadingStats] = useState(true);
       const [statsError, setStatsError] = useState<string | null>(null);
 
       // State for Following
       const [isFollowing, setIsFollowing] = useState(false);
-      const [isLoadingFollowStatus, setIsLoadingFollowStatus] = useState(true); // Start as true
+      const [isLoadingFollowStatus, setIsLoadingFollowStatus] = useState(true);
       const [isUpdatingFollow, setIsUpdatingFollow] = useState(false);
       const [followCounts, setFollowCounts] = useState<FollowCounts>({ followers: 0, following: 0 });
-      const [isLoadingFollowCounts, setIsLoadingFollowCounts] = useState(true); // Start as true
+      const [isLoadingFollowCounts, setIsLoadingFollowCounts] = useState(true);
 
       // Determine the actual user ID to fetch data for
       const profileUserId = viewingProfileId || currentUser?.id;
@@ -90,7 +92,7 @@ import React, { useState, useEffect, useCallback } from 'react';
             setProfileData(null);
           } else {
             setProfileData(data);
-            setEditDisplayName(data?.display_name || ''); // Initialize edit name here
+            setEditDisplayName(data?.display_name || '');
           }
         } catch (err: any) {
           console.error("Unexpected error fetching profile:", err);
@@ -139,7 +141,7 @@ import React, { useState, useEffect, useCallback } from 'react';
             .select(`
               attempts, sent_at, rating, notes, wishlist, updated_at,
               route:routes!inner(
-                id, gym_id, name, grade, grade_color, date_set, location_id,
+                id, gym_id, name, grade, grade_color, date_set, location_id, removed_at,
                 location_name:locations ( name )
               )
             `)
@@ -188,12 +190,13 @@ import React, { useState, useEffect, useCallback } from 'react';
             .from('user_route_progress')
             .select(`
               route:routes!inner(
-                id, gym_id, name, grade, grade_color, date_set, location_id,
+                id, gym_id, name, grade, grade_color, date_set, location_id, removed_at,
                 location_name:locations ( name )
               )
             `)
             .eq('user_id', profileUserId)
             .eq('wishlist', true)
+            .is('route.removed_at', null) // Only show active routes on wishlist
             .order('created_at', { referencedTable: 'routes', ascending: false });
 
           if (error) {
@@ -269,7 +272,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 
       // Fetch all data when profileUserId changes
       useEffect(() => {
-        // Reset loading states when ID changes
+        // Reset loading states and visible counts when ID changes
         setIsLoadingProfile(true);
         setIsLoadingLogbook(true);
         setIsLoadingWishlist(true);
@@ -280,6 +283,8 @@ import React, { useState, useEffect, useCallback } from 'react';
         setLogbookError(null);
         setWishlistError(null);
         setStatsError(null);
+        setVisibleLogbookCount(INITIAL_ITEM_LIMIT); // Reset limit
+        setVisibleWishlistCount(INITIAL_ITEM_LIMIT); // Reset limit
 
         // Fetch data
         fetchProfileData();
@@ -306,14 +311,11 @@ import React, { useState, useEffect, useCallback } from 'react';
             const { error: authUpdateError } = await supabase.auth.updateUser({ data: { display_name: trimmedName } });
             if (authUpdateError) { console.error("Auth metadata update failed after profile update:", authUpdateError); throw new Error(`Auth update failed: ${authUpdateError.message}. Profile might be updated.`); }
             console.log("Profile and auth metadata updated successfully.");
-            // Update local state immediately for responsiveness
             setProfileData(prev => prev ? { ...prev, display_name: trimmedName } : null);
             setIsEditing(false);
         } catch (error: any) {
             console.error("Error saving display name:", error);
             setEditError(`Failed to update name: ${error.message}`);
-            // Optionally refetch profile data on error to revert
-            // await fetchProfileData();
         } finally {
             setIsSaving(false);
         }
@@ -353,15 +355,24 @@ import React, { useState, useEffect, useCallback } from 'react';
         }
       };
 
+      // --- Show More Handlers ---
+      const handleShowMoreLogbook = () => {
+        setVisibleLogbookCount(logbookEntries.length);
+      };
+      const handleShowMoreWishlist = () => {
+        setVisibleWishlistCount(wishlistItems.length);
+      };
+
       // --- Rendering Functions ---
       const renderLogbookItem = (entry: LogbookEntry) => {
         const displayLocation = entry.location_name || 'Unknown Location';
+        const isRemoved = !!entry.removed_at;
         return (
-          <div key={entry.id} onClick={() => onNavigate('routeDetail', { routeId: entry.id })} className="flex items-center gap-3 p-3 border-b last:border-b-0 hover:bg-gray-50 cursor-pointer">
+          <div key={entry.id} onClick={() => onNavigate('routeDetail', { routeId: entry.id })} className={`flex items-center gap-3 p-3 border-b last:border-b-0 ${isRemoved ? 'opacity-60 bg-gray-50' : 'hover:bg-gray-50 cursor-pointer'}`}>
             <div className={`w-8 h-8 ${getGradeColorClass(entry.grade_color)} rounded-full flex items-center justify-center text-white font-bold text-xs flex-shrink-0`}> {entry.grade} </div>
             <div className="flex-grow overflow-hidden">
-              <p className="font-medium text-brand-gray truncate">{entry.name}</p>
-              <p className="text-xs text-gray-500"> {displayLocation} - Logged: {new Date(entry.user_progress_updated_at).toLocaleDateString()} </p>
+              <p className={`font-medium text-brand-gray truncate ${isRemoved ? 'line-through' : ''}`}>{entry.name}</p>
+              <p className="text-xs text-gray-500"> {displayLocation} - Logged: {new Date(entry.user_progress_updated_at).toLocaleDateString()} {isRemoved && '(Removed)'} </p>
             </div>
             {entry.user_progress_sent_at ? ( <CheckCircle size={18} className="text-green-500 flex-shrink-0" title={`Sent (${entry.user_progress_attempts} attempts)`} /> ) : entry.user_progress_attempts > 0 ? ( <Circle size={18} className="text-orange-400 flex-shrink-0" title={`Attempted (${entry.user_progress_attempts} attempts)`} /> ) : null}
           </div>
@@ -370,6 +381,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 
       const renderWishlistItem = (route: RouteData) => {
          const displayLocation = route.location_name || 'Unknown Location';
+         // Wishlist items should already be filtered for active routes, but double-check
+         if (route.removed_at) return null;
          return (
             <div key={route.id} onClick={() => onNavigate('routeDetail', { routeId: route.id })} className="flex items-center gap-3 p-3 border-b last:border-b-0 hover:bg-gray-50 cursor-pointer">
                <div className={`w-8 h-8 ${getGradeColorClass(route.grade_color)} rounded-full flex items-center justify-center text-white font-bold text-xs flex-shrink-0`}> {route.grade} </div>
@@ -397,10 +410,6 @@ import React, { useState, useEffect, useCallback } from 'react';
       // --- End Rendering Functions ---
 
       // --- Loading / Error States for Profile ---
-      // REMOVED the top-level loading check that caused the black screen
-      // if (isLoadingProfile) { return <div className="min-h-screen flex items-center justify-center"><Loader2 className="animate-spin text-accent-blue" size={32} /></div>; }
-
-      // Handle profile-specific errors after the main layout renders
       if (profileError) {
         return (
           <div className="min-h-screen bg-gray-100 flex flex-col items-center justify-center p-4 text-center">
@@ -418,6 +427,8 @@ import React, { useState, useEffect, useCallback } from 'react';
       const currentDisplayName = isLoadingProfile ? 'Loading...' : (profileData?.display_name || 'Climber');
       const userAvatar = isLoadingProfile ? '' : (profileData?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(currentDisplayName)}&background=random&color=fff`);
       const userHomeGymIds = isLoadingProfile ? [] : (profileData?.selected_gym_ids || []);
+      const canShowMoreLogbook = logbookEntries.length > visibleLogbookCount;
+      const canShowMoreWishlist = wishlistItems.length > visibleWishlistCount;
 
       return (
         <div className="min-h-screen bg-gray-100 pb-16">
@@ -425,7 +436,7 @@ import React, { useState, useEffect, useCallback } from 'react';
           <header className="bg-gradient-to-r from-brand-green to-brand-gray p-4 pt-8 pb-20 text-white relative">
              {/* Back Button for non-own profiles */}
              {!isOwnProfile && (
-                <button onClick={() => onNavigate('discover')} /* Simplified back for now */ className="absolute top-4 left-4 text-white/80 hover:text-white z-10">
+                <button onClick={() => onNavigate('discover')} className="absolute top-4 left-4 text-white/80 hover:text-white z-10">
                    <ArrowLeft size={24} />
                 </button>
              )}
@@ -487,7 +498,7 @@ import React, { useState, useEffect, useCallback } from 'react';
                 <div className="absolute bottom-4 right-4 z-10">
                    <button
                       onClick={handleFollowToggle}
-                      disabled={isLoadingFollowStatus || isUpdatingFollow || isLoadingProfile} // Disable while profile loads too
+                      disabled={isLoadingFollowStatus || isUpdatingFollow || isLoadingProfile}
                       className={`px-4 py-1.5 rounded-full text-sm font-semibold transition-colors duration-200 flex items-center gap-1.5 disabled:opacity-60 ${
                          isFollowing
                             ? 'bg-white text-brand-green hover:bg-gray-200'
@@ -525,7 +536,17 @@ import React, { useState, useEffect, useCallback } from 'react';
                   ) : logbookError ? (
                     <p className="text-center text-red-500 p-6">{logbookError}</p>
                   ) : logbookEntries.length > 0 ? (
-                    logbookEntries.map(renderLogbookItem)
+                    <>
+                      {logbookEntries.slice(0, visibleLogbookCount).map(renderLogbookItem)}
+                      {canShowMoreLogbook && (
+                        <button
+                          onClick={handleShowMoreLogbook}
+                          className="w-full text-center text-sm text-accent-blue hover:underline font-medium py-3 border-t"
+                        >
+                          Show More ({logbookEntries.length - visibleLogbookCount} remaining)
+                        </button>
+                      )}
+                    </>
                   ) : (
                     <p className="text-center text-gray-500 p-6">No climbs logged yet.</p>
                   )}
@@ -539,7 +560,17 @@ import React, { useState, useEffect, useCallback } from 'react';
                   ) : wishlistError ? (
                     <p className="text-center text-red-500 p-6">{wishlistError}</p>
                   ) : wishlistItems.length > 0 ? (
-                    wishlistItems.map(renderWishlistItem)
+                     <>
+                       {wishlistItems.slice(0, visibleWishlistCount).map(renderWishlistItem)}
+                       {canShowMoreWishlist && (
+                         <button
+                           onClick={handleShowMoreWishlist}
+                           className="w-full text-center text-sm text-accent-blue hover:underline font-medium py-3 border-t"
+                         >
+                           Show More ({wishlistItems.length - visibleWishlistCount} remaining)
+                         </button>
+                       )}
+                     </>
                   ) : (
                     <p className="text-center text-gray-500 p-6">Your wishlist is empty.</p>
                   )}
